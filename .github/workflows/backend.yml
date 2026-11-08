@@ -1,0 +1,132 @@
+# CI backend fondasi: migrasi, typecheck, lint, audit dependensi, uji unit/DB/API/startup
+# langsung ke PostgreSQL DAN lewat PgBouncer mode transaksi. Database sementara + data dummy.
+# Lulus di sini = lulus uji CI, BUKAN bukti aplikasi produksi aman.
+name: backend-foundation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PG_BIN: /usr/lib/postgresql/16/bin
+      PGPORT_DIRECT: "55432"
+      PGB_PORT: "6433"
+      DB: agri
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Pasang PostgreSQL 16 dan PgBouncer (layanan bawaan dimatikan)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-16 postgresql-client-16 pgbouncer
+          sudo systemctl stop postgresql pgbouncer || true
+          "$PG_BIN/postgres" --version
+          pgbouncer --version | head -1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Jalankan PostgreSQL sementara
+        run: |
+          RT="$RUNNER_TEMP/pg"; mkdir -p "$RT/sock"
+          echo "PGSOCK=$RT/sock" >> "$GITHUB_ENV"
+          "$PG_BIN/initdb" -D "$RT/data" -U postgres -A trust > /dev/null
+          "$PG_BIN/pg_ctl" -D "$RT/data" -l "$RT/pg.log" -w \
+            -o "-p $PGPORT_DIRECT -k $RT/sock -c listen_addresses='' -c max_connections=300" start
+          psql -h "$RT/sock" -p "$PGPORT_DIRECT" -U postgres -X -q -c "create database $DB"
+
+      - name: Migrasi (gagal total pada error SQL)
+        env:
+          PGHOST: ${{ env.PGSOCK }}
+          PGUSER: postgres
+        run: |
+          PGPORT=$PGPORT_DIRECT PGDATABASE=$DB bash db/migrate.sh
+          psql -h "$PGSOCK" -p "$PGPORT_DIRECT" -U postgres -d "$DB" -X -q -v ON_ERROR_STOP=1 -f db/test/test_security_params.sql
+
+      - name: Jalankan PgBouncer mode transaksi
+        run: |
+          D="$RUNNER_TEMP/pgb"; mkdir -p "$D"; cp db/test/userlist.txt "$D/"
+          sed -e "s#@DB@#$DB#g" -e "s#@PGHOST@#$PGSOCK#g" -e "s#@PGPORT@#$PGPORT_DIRECT#g" \
+              -e "s#@PGB_PORT@#$PGB_PORT#g" -e "s#@DIR@#$D#g" db/test/pgbouncer.ini.template > "$D/pgbouncer.ini"
+          pgbouncer -d "$D/pgbouncer.ini"
+          sleep 1
+          psql -h 127.0.0.1 -p "$PGB_PORT" -U app_runtime -d "$DB" -X -tAc "select 'pgbouncer ok'"
+
+      - name: Instal dependensi (lockfile)
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: backend
+        run: npm run lint
+
+      - name: Audit dependensi (tingkat high ke atas)
+        working-directory: backend
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+
+      - name: Build
+        working-directory: backend
+        run: npm run build
+
+      - name: Uji langsung ke PostgreSQL (unit, startup, DB, pooler, API)
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_RESULTS_DIR: results
+        run: node dist/test/run.js
+
+      - name: Uji lewat PgBouncer mode transaksi (DB, pooler, API)
+        if: always()
+        working-directory: backend
+        env:
+          TEST_TARGET: pgbouncer
+          TEST_SUITES: db,pooler,api
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: 127.0.0.1
+          TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
+          TEST_PGB_POOL1_DB: ${{ env.DB }}_pool1
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_RESULTS_DIR: results
+        run: node dist/test/run.js
+
+      - name: Gerbang hasil (semua ID wajib PASS di kedua target)
+        if: always()
+        run: python3 backend/test/ci_gate.py backend/results
+
+      - name: Simpan hasil uji
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-results-${{ github.run_number }}
+          path: backend/results/
+          retention-days: 30
