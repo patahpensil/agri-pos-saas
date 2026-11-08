@@ -1,0 +1,17 @@
+[PASS] API-01: A→404 {"error":"NOT_FOUND"}; B→200
+[PASS] API-02: status 400 VALIDATION; Sale di B=0
+[PASS] API-03: 401, 401
+[PASS] API-04: sebelum 201; sesudah 401
+[PASS] API-05: Admin 403 FORBIDDEN_ROLE; Owner 409 REFUND_CAP_EXCEEDED
+[PASS] API-06: 403, 200
+[PASS] API-07b: 403 PLAN_LIMIT
+[PASS] API-07: promo 403 FEATURE_NOT_IN_PLAN; admin 403 PLAN_LIMIT
+[PASS] API-08: tak terdaftar 401 {"error":"INVALID_CREDENTIALS"} | salah 401 {"error":"INVALID_CREDENTIALS"}; percobaan 401,401,401,429,429,429; sandi benar saat terkunci 429
+[PASS] API-09: salah 400,400,400,400,400; benar setelah 5x → 429 OTP_LOCKED; akun dibuat=0; daftar nomor terdaftar → 202 {"status":"OTP_SENT_IF_ELIGIBLE"} (tanpa OTP)
+[PASS] API-10: status 201,201,201,201,201; ID unik 3427; Sale=1; stok 20→19
+[PASS] API-11: jual 403 ENTITLEMENT_EXPIRED; ekspor 200
+[PASS] API-12: path 400; body angka 400; batch 409 INSUFFICIENT_STOCK; tabel sale masih ada (1928 baris)
+[PASS] API-13: kebocoran=0; konteks di koneksi idle=''
+[PASS] API-14: pertama 201; isi beda 422 IDEMPOTENCY_KEY_REUSED; retry identik 201 sama=true; stok 20→19
+
+PASS 15/15

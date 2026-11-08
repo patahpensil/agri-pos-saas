@@ -1,0 +1,69 @@
+# Uji regresi minimum Kandidat A (PoC database + API + pooler + PITR).
+# Letakkan di <root repo>/.github/workflows/ ; folder PoC diasumsikan bernama poc_repro/ di root repo.
+# Wajib hijau sebelum merge (aktifkan "Require status checks" di branch protection).
+name: poc-regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: poc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PG_BIN: /usr/lib/postgresql/16/bin
+      # Runtime khusus job di folder sementara runner (audit R2: jangan path bersama)
+      POC_RUNTIME: ${{ runner.temp }}/poc_runtime
+      POC_RESULTS: ${{ github.workspace }}/poc_repro/results
+    defaults:
+      run:
+        working-directory: poc_repro
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pasang PostgreSQL 16 dan PgBouncer
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-16 postgresql-client-16 pgbouncer
+          sudo systemctl stop postgresql pgbouncer || true   # layanan bawaan tidak dipakai
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: poc_repro/api/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependensi Python
+        run: pip install "psycopg[binary]>=3.2,<3.4"
+
+      - name: Setup lingkungan uji (gagal bila migrasi error)
+        run: bash scripts/setup.sh
+
+      - name: Jalankan seluruh uji
+        run: bash scripts/run_all.sh
+
+      - name: Simpan hasil uji
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poc-results-${{ github.run_number }}
+          path: poc_repro/results/
+          retention-days: 30
+
+      - name: Hentikan proses
+        if: always()
+        run: bash scripts/teardown.sh

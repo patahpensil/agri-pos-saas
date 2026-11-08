@@ -1,0 +1,34 @@
+[
+ {
+  "id": "P-01",
+  "jenis": "DB via PgBouncer mode transaksi",
+  "kondisi": "300x: klien 1 memakai konteks lokal A, klien 2 tanpa konteks",
+  "harapan": "Klien 2 selalu 0 baris",
+  "aktual": "kebocoran=0/300",
+  "status": "PASS"
+ },
+ {
+  "id": "P-02",
+  "jenis": "DB via PgBouncer mode transaksi",
+  "kondisi": "Kontrol negatif: set_config tingkat sesi lewat pooler",
+  "harapan": "Membuktikan kebocoran bila desain salah",
+  "aktual": "klien tanpa konteks melihat data A pada 50/50 percobaan",
+  "status": "PASS"
+ },
+ {
+  "id": "P-03",
+  "jenis": "DB via PgBouncer mode transaksi",
+  "kondisi": "40 putaran x 20 kasir berebut stok 1 lewat pooler",
+  "harapan": "Tepat 1 sukses",
+  "aktual": "40/40 putaran benar",
+  "status": "PASS"
+ },
+ {
+  "id": "P-04",
+  "jenis": "DB via PgBouncer mode transaksi",
+  "kondisi": "30x query berulang (prepared statement otomatis driver) lewat pooler",
+  "harapan": "Tanpa error",
+  "aktual": "OK",
+  "status": "PASS"
+ }
+]

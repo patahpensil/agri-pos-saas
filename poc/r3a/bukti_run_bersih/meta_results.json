@@ -1,0 +1,10 @@
+[
+ {
+  "id": "META-01",
+  "jenis": "Uji meta setup",
+  "kondisi": "setup.sh dengan migrasi yang sengaja salah",
+  "harapan": "exit != 0 dan berhenti sebelum 'Siap'",
+  "aktual": "exit=3; ERROR:  relation \"t\" already exists",
+  "status": "PASS"
+ }
+]

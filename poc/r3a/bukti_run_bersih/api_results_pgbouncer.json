@@ -1,0 +1,122 @@
+[
+ {
+  "id": "API-01",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Owner A membuka /sales/{id milik B}",
+  "harapan": "404 tanpa data B",
+  "aktual": "A→404 {\"error\":\"NOT_FOUND\"}; B→200",
+  "status": "PASS"
+ },
+ {
+  "id": "API-02",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Body POST /sales menyisipkan tenant_id milik B",
+  "harapan": "Ditolak; tidak ada data di B",
+  "aktual": "status 400 VALIDATION; Sale di B=0",
+  "status": "PASS"
+ },
+ {
+  "id": "API-03",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Tanpa token & token palsu",
+  "harapan": "401",
+  "aktual": "401, 401",
+  "status": "PASS"
+ },
+ {
+  "id": "API-04",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Owner mencabut sesi Admin",
+  "harapan": "Token Admin langsung tidak berlaku",
+  "aktual": "sebelum 201; sesudah 401",
+  "status": "PASS"
+ },
+ {
+  "id": "API-05",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Admin vs Owner menyetujui refund (L=0)",
+  "harapan": "Admin 403; Owner sampai ke aturan DB",
+  "aktual": "Admin 403 FORBIDDEN_ROLE; Owner 409 REFUND_CAP_EXCEEDED",
+  "status": "PASS"
+ },
+ {
+  "id": "API-06",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Admin vs Owner ekspor massal",
+  "harapan": "Admin 403, Owner 200",
+  "aktual": "403, 200",
+  "status": "PASS"
+ },
+ {
+  "id": "API-07b",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "PRO menambah Admin kedua",
+  "harapan": "403 PLAN_LIMIT",
+  "aktual": "403 PLAN_LIMIT",
+  "status": "PASS"
+ },
+ {
+  "id": "API-07",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "FREE memanggil API promo & tambah Admin",
+  "harapan": "Ditolak backend",
+  "aktual": "promo 403 FEATURE_NOT_IN_PLAN; admin 403 PLAN_LIMIT",
+  "status": "PASS"
+ },
+ {
+  "id": "API-08",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Nomor tak terdaftar vs sandi salah; lalu 6 percobaan",
+  "harapan": "Respons identik; dibatasi 429",
+  "aktual": "tak terdaftar 401 {\"error\":\"INVALID_CREDENTIALS\"} | salah 401 {\"error\":\"INVALID_CREDENTIALS\"}; percobaan 401,401,401,429,429,429; sandi benar saat terkunci 429",
+  "status": "PASS"
+ },
+ {
+  "id": "API-09",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "5 OTP salah lalu OTP benar; daftar ulang nomor terdaftar",
+  "harapan": "Terkunci; tidak ada akun; respons daftar identik",
+  "aktual": "salah 400,400,400,400,400; benar setelah 5x → 429 OTP_LOCKED; akun dibuat=0; daftar nomor terdaftar → 202 {\"status\":\"OTP_SENT_IF_ELIGIBLE\"} (tanpa OTP)",
+  "status": "PASS"
+ },
+ {
+  "id": "API-10",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "5 request POST /sales bersamaan dengan Idempotency-Key sama",
+  "harapan": "Satu Sale",
+  "aktual": "status 201,201,201,201,201; ID unik 3427; Sale=1; stok 20→19",
+  "status": "PASS"
+ },
+ {
+  "id": "API-11",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Masa trial habis",
+  "harapan": "Jual 403; ekspor 200",
+  "aktual": "jual 403 ENTITLEMENT_EXPIRED; ekspor 200",
+  "status": "PASS"
+ },
+ {
+  "id": "API-12",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Injeksi lewat path & body",
+  "harapan": "400/404, tanpa detail SQL, data utuh",
+  "aktual": "path 400; body angka 400; batch 409 INSUFFICIENT_STOCK; tabel sale masih ada (1928 baris)",
+  "status": "PASS"
+ },
+ {
+  "id": "API-13",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "400 request bergantian 2 tenant lewat pool (POOL_MAX=10)",
+  "harapan": "Tidak ada kebocoran; konteks kosong setelah transaksi",
+  "aktual": "kebocoran=0; konteks di koneksi idle=''",
+  "status": "PASS"
+ },
+ {
+  "id": "API-14",
+  "jenis": "API integration (HTTP lokal)",
+  "kondisi": "Idempotency-Key sama dengan isi berbeda lewat HTTP",
+  "harapan": "422 IDEMPOTENCY_KEY_REUSED; retry identik = Sale sama",
+  "aktual": "pertama 201; isi beda 422 IDEMPOTENCY_KEY_REUSED; retry identik 201 sama=true; stok 20→19",
+  "status": "PASS"
+ }
+]
