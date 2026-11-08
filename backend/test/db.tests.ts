@@ -21,7 +21,7 @@ const TABLES = [
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.
 const ALLOW: Record<string, string[]> = {
   auth_runtime: [
-    "iam.activate_admin", "iam.ip_rate_hit", "iam.login", "iam.register_start", "iam.register_verify",
+    "iam.activate_admin", "iam.admin_activation_start", "iam.ip_rate_hit", "iam.login", "iam.register_start", "iam.register_verify",
     "iam.security_params_status",
   ],
   app_runtime: [

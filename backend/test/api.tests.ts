@@ -3,12 +3,23 @@ import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { setLogSink } from "../src/common/log";
 import { TestOtpSender } from "../src/auth/otp-sender";
-import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, makePro, newDevice, newPhone, ok, test } from "./harness";
+import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, makePro, newDevice, newPhone, ok, sleep, test } from "./harness";
 
 const K = "API";
 const LOGS: string[] = [];
 let base = "";
-const sender = new TestOtpSender();
+// Pengirim uji yang bisa dibuat gagal N kali (AUD-OTP-03).
+class ToggleSender extends TestOtpSender {
+  failRemaining = 0;
+  override async send(phone: string, code: string): Promise<void> {
+    if (this.failRemaining > 0) {
+      this.failRemaining--;
+      throw new Error("penyedia gagal (simulasi)");
+    }
+    return super.send(phone, code);
+  }
+}
+const sender = new ToggleSender();
 const SECRETS = new Set<string>([TEST_OTP_MAC_KEY.toString()]);   // token, OTP, sandi, kunci -> dicari di log (T-SEC-03)
 
 interface Res { status: number; body: Record<string, unknown>; text: string }
@@ -73,6 +84,7 @@ export async function apiTests(): Promise<void> {
     otpSender: "test",
     ipHashSecret: Buffer.from("TEST_ONLY_ip_hash_secret_for_api_tests_0123456789"),
     otpMacKey: TEST_OTP_MAC_KEY,
+    otpDispatchIntervalMs: 300,
     trustProxyHops: 0,
   };
   const { app, db } = await createApp(cfg, { otpSender: sender });
@@ -418,6 +430,52 @@ export async function apiTests(): Promise<void> {
       ok(inv.status === 403 && inv.body.code === "TENANT_LOCKED", `undang: ${inv.status}`);
       ok(rev.status === 204 && deact.status === 204 && out.status === 204, `${rev.status},${deact.status},${out.status}`);
       return "undang 403 TENANT_LOCKED; cabut sesi 204; nonaktifkan Admin 204; logout 204";
+    });
+
+    await test("AUD-OTP-03", K, "Pengiriman OTP pertama gagal -> pemroses berkala mengirim ulang TANPA permintaan API baru", async () => {
+      const phone = newPhone();
+      sender.failRemaining = 1;
+      const start = await http("POST", "/auth/register/start", { phone });
+      eq(start.status, 202, "register/start");
+      eq(sender.count(phone), 0, "terkirim saat pengirim gagal");
+      const [q] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
+      ok(q.status === "QUEUED" && q.send_attempts === 1, `antrean setelah gagal: ${JSON.stringify(q)}`);
+      let waited = 0;
+      while (sender.count(phone) === 0 && waited < 10_000) {
+        await sleep(100);
+        waited += 100;
+      }
+      eq(sender.count(phone), 1, "kiriman ulang oleh pemroses berkala");
+      // ack ditulis sesudah send() selesai; tunggu sebentar sampai konfirmasi tercatat.
+      let d = { status: "", send_attempts: 0 };
+      for (let i = 0; i < 20 && d.status !== "SENT"; i++) {
+        [d] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
+        if (d.status !== "SENT") await sleep(100);
+      }
+      ok(d.status === "SENT" && d.send_attempts === 2, `antrean setelah kirim ulang: ${JSON.stringify(d)}`);
+      const v = await http("POST", "/auth/register/verify-otp", { phone, code: otpOf(phone), password: PW, businessName: "Kios Retry Otomatis", timezone: "Asia/Makassar", deviceId: newDevice() });
+      eq(v.status, 201, "verifikasi kode kiriman ulang");
+      return `gagal -> QUEUED; terkirim ulang otomatis setelah ${waited} ms tanpa request API; SENT (2 percobaan); verifikasi 201`;
+    });
+
+    await test("AUD-OTP-04", K, "Minta OTP aktivasi baru selama undangan berlaku; jawaban identik untuk nomor tanpa undangan", async () => {
+      const o = await registerOwner();
+      await makePro(o.tenant);
+      const phone = newPhone();
+      eq((await http("POST", "/staff", { phone, displayName: "Admin OTP" }, o.token)).status, 202, "undang");
+      const first = otpOf(phone);
+      await admin("update iam.otp_challenge set created_at=now()-interval '1 hour', expires_at=now()-interval '59 minutes' where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null and used_at is null", [phone]);
+      const expired = await http("POST", "/auth/staff-activation/verify", { phone, code: first, password: PW, deviceId: newDevice() });
+      eq(expired.status, 400, "OTP lama kedaluwarsa");
+      const n0 = sender.count(phone);
+      const again = await http("POST", "/auth/staff-activation/start", { phone });
+      const nobody = await http("POST", "/auth/staff-activation/start", { phone: newPhone() });
+      ok(sameShape(again, nobody), "jawaban berbeda untuk nomor tanpa undangan");
+      eq(again.status, 202, "start");
+      eq(sender.count(phone), n0 + 1, "OTP baru terkirim");
+      const act = await http("POST", "/auth/staff-activation/verify", { phone, code: otpOf(phone), password: PW, deviceId: newDevice() });
+      eq(act.status, 201, "aktivasi dengan OTP baru");
+      return "OTP lama kedaluwarsa 400; start -> OTP baru (202, identik dgn nomor tanpa undangan); aktivasi 201";
     });
 
     await test("T-SEC-03", "uji log","Log tidak memuat OTP, sandi, token, atau nomor HP utuh", async () => {

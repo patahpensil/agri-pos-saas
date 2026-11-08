@@ -17,6 +17,8 @@ COMMON = (
     + [("AUD-OTP-01", DB), ("AUD-OTP-01", API), ("AUD-OTP-02", "integrasi DB/pengirim OTP"),
        ("AUD-SESSION-01", DB), ("AUD-SESSION-01", API), ("AUD-LOGIN-01", DB), ("AUD-LOGIN-01", API),
        ("AUD-LOCK-01", DB), ("AUD-LOCK-01", API)]
+    # Audit ulang PR #4 (R4-01, R4-02)
+    + [("AUD-OTP-03", API), ("AUD-OTP-04", DB), ("AUD-OTP-04", API)]
 )
 # Uji mutasi (database terpisah, target langsung): kontrol dihapus -> ID ini WAJIB FAIL.
 MUTATIONS = {
@@ -26,6 +28,8 @@ MUTATIONS = {
     "lock_invite": ["AUD-LOCK-01"],
     "issue_grant": ["SEC-FIX-01", "T-DB-04"],
     "no_force": ["T-DB-02"],
+    "invite_otp_ttl": ["AUD-OTP-04"],
+    "invite_expiry": ["AUD-OTP-04"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),

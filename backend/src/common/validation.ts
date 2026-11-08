@@ -46,6 +46,7 @@ export const schemas = {
     .strict(),
   login: z.object({ phone, password, deviceId }).strict(),
   activateAdmin: z.object({ phone, code: otpCode, password, deviceId }).strict(),
+  activationStart: z.object({ phone }).strict(),
   staffInvite: z.object({ phone, displayName: z.string().trim().min(1).max(80) }).strict(),
   empty: z.object({}).strict(),
 };

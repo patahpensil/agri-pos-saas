@@ -159,6 +159,52 @@ export async function audDbTests(): Promise<void> {
     }
   });
 
+  // ------------------------------------------------------------------ AUD-OTP-04 (R4-02)
+  await test("AUD-OTP-04", K, "Masa OTP aktivasi Admin terpisah dari masa undangan; masing-masing berakhir sesuai batasnya", async () => {
+    const [prm] = await admin<{ otp: number; inv: number }>(
+      "select (select value::int from iam.security_param where key='otp_ttl_seconds') otp, (select value::int from iam.security_param where key='invite_ttl_seconds') inv",
+    );
+    ok(prm.otp !== prm.inv, "parameter uji harus berbeda");
+    // a) OTP berakhir sesuai otp_ttl, undangan sesuai invite_ttl
+    const o = await registerOwnerSql();
+    await makePro(o.tenant);
+    const p = newPhone();
+    const [inv] = await asActor<{ id: string }>(o.token, "select app.staff_invite($1,'Admin TTL') as id", [p]);
+    const [t] = await admin<{ otp_s: number; inv_s: number }>(
+      `select extract(epoch from c.expires_at - c.created_at)::int otp_s, extract(epoch from m.invite_expires_at - m.created_at)::int inv_s
+         from iam.membership m join iam.otp_challenge c on c.membership_id = m.id where m.id = $1`, [inv.id],
+    );
+    eq(t.otp_s, prm.otp, "masa OTP (detik)");
+    eq(t.inv_s, prm.inv, "masa undangan (detik)");
+    const c1 = await claimCode(p);
+    await admin("update iam.otp_challenge set created_at=now()-interval '1 hour', expires_at=now()-interval '59 minutes' where membership_id=$1 and used_at is null and voided_at is null", [inv.id]);
+    const [x1] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.activate_admin($1,$2,$3,$4)", [p, mac("ACTIVATE_ADMIN", p, c1), PW, newDevice()]);
+    eq(x1.r_status, "OTP_INVALID", "OTP lewat masa, undangan masih berlaku");
+    const [s1] = await asRole<{ s: string }>("auth_runtime", "select iam.admin_activation_start($1) s", [p]);
+    eq(s1.s, "ACCEPTED", "minta OTP baru");
+    const c2 = await claimCode(p);
+    const [x2] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.activate_admin($1,$2,$3,$4)", [p, mac("ACTIVATE_ADMIN", p, c2), PW, newDevice()]);
+    eq(x2.r_status, "OK", "aktivasi dengan OTP baru");
+    // b) undangan berakhir walaupun OTP masih berlaku; tidak ada OTP baru setelah undangan habis
+    const o2 = await registerOwnerSql();
+    await makePro(o2.tenant);
+    const p2 = newPhone();
+    const [inv2] = await asActor<{ id: string }>(o2.token, "select app.staff_invite($1,'Admin Habis') as id", [p2]);
+    const c3 = await claimCode(p2);
+    await admin("update iam.membership set invite_expires_at = now() - interval '1 second' where id=$1", [inv2.id]);
+    const [x3] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.activate_admin($1,$2,$3,$4)", [p2, mac("ACTIVATE_ADMIN", p2, c3), PW, newDevice()]);
+    const jobsBefore = (await admin<{ n: number }>("select count(*)::int n from iam.otp_outbox where phone_e164=$1", [p2]))[0].n;
+    await admin("update iam.otp_challenge set created_at = created_at - interval '1 hour' where membership_id=$1", [inv2.id]);   // lewati jeda kirim ulang
+    const [s2] = await asRole<{ s: string }>("auth_runtime", "select iam.admin_activation_start($1) s", [p2]);
+    const jobsAfter = (await admin<{ n: number }>("select count(*)::int n from iam.otp_outbox where phone_e164=$1", [p2]))[0].n;
+    const [s3] = await asRole<{ s: string }>("auth_runtime", "select iam.admin_activation_start($1) s", [newPhone()]);
+    eq(x3.r_status, "INVITE_INVALID", "undangan habis, OTP masih berlaku");
+    eq(s2.s, "ACCEPTED", "jawaban start undangan habis");
+    eq(jobsAfter, jobsBefore, "OTP baru diterbitkan untuk undangan habis");
+    eq(s3.s, "ACCEPTED", "jawaban start nomor tanpa undangan");
+    return `OTP ${t.otp_s} dtk vs undangan ${t.inv_s} dtk; OTP lewat -> OTP_INVALID, OTP baru -> OK; undangan lewat -> INVITE_INVALID & tanpa OTP baru`;
+  });
+
   // ------------------------------------------------------------------ AUD-SESSION-01
   await test("AUD-SESSION-01", K, "Login serentak HP A & HP B (barrier, 50 putaran): tepat 1 sesi aktif, perangkat lama tidak punya hak", async () => {
     let bad = 0;

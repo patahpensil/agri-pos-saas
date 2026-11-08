@@ -27,6 +27,7 @@ export interface AppConfig {
   otpSender: OtpSenderKind;
   ipHashSecret: Buffer;
   otpMacKey: Buffer;
+  otpDispatchIntervalMs: number;
   trustProxyHops: number;
 }
 
@@ -113,6 +114,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     otpSender,
     ipHashSecret,
     otpMacKey,
+    // Interval pemroses antrean OTP berkala (R4-01). Wajib diisi; tanpa nilai bawaan.
+    otpDispatchIntervalMs: int(env, "OTP_DISPATCH_INTERVAL_MS", problems, 200, 60000),
     trustProxyHops: env.TRUST_PROXY_HOPS === undefined ? 0 : int(env, "TRUST_PROXY_HOPS", problems, 0, 5),
   };
 

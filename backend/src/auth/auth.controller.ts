@@ -74,6 +74,18 @@ export class AuthController {
     return { token: row.r_token, expiresAt: row.r_expires_at };
   }
 
+  // R4-02: OTP aktivasi baru selama undangan Admin masih berlaku. Jawaban selalu sama (anti-enumerasi).
+  @Post("auth/staff-activation/start")
+  @HttpCode(202)
+  async activationStart(@Req() req: Request, @Body() body: unknown) {
+    const b = parseBody(schemas.activationStart, body);
+    await this.ipGate(req, "IP_ACTIVATE");
+    const r = await db(this.dbs.auth.query<{ s: string }>("select iam.admin_activation_start($1) as s", [b.phone]));
+    if (r.rows[0].s === "RATE_LIMITED") throw rateLimited();
+    await dispatchOtps(this.dbs.otp, this.sender, this.cfg.otpMacKey);
+    return { status: "OTP_SENT_IF_ELIGIBLE" };
+  }
+
   @Post("auth/staff-activation/verify")
   @HttpCode(201)
   async activateAdmin(@Req() req: Request, @Body() body: unknown) {

@@ -139,6 +139,8 @@ jobs:
           bash db/test/mutation.sh LOCK_INVITE AUD-LOCK-01 || rc=1
           bash db/test/mutation.sh ISSUE_GRANT SEC-FIX-01,T-DB-04 || rc=1
           bash db/test/mutation.sh NO_FORCE T-DB-02 || rc=1
+          bash db/test/mutation.sh INVITE_OTP_TTL AUD-OTP-04 || rc=1
+          bash db/test/mutation.sh INVITE_EXPIRY AUD-OTP-04 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc
