@@ -15,6 +15,7 @@ const BASE_ENV: Record<string, string> = {
   PORT: "0", DB_HOST: "127.0.0.1", DB_PORT: "5432", DB_NAME: "x", DB_POOL_MAX: "2",
   DB_AUTH_USER: "auth_runtime", DB_APP_USER: "app_runtime", DB_OTP_USER: "otp_dispatch_runtime",
   IP_HASH_SECRET: "0123456789abcdef0123456789abcdef-secret",
+  OTP_MAC_KEY: "fedcba9876543210fedcba9876543210-otpmac",
 };
 
 function throwsConfig(env: Record<string, string>): string {
@@ -107,7 +108,7 @@ export async function configTests(): Promise<void> {
       mode: "production", port: 0,
       db: { host: RUNTIME_HOST, port: RUNTIME_PORT, database: DBNAME, poolMax: 1,
         auth: { user: "auth_runtime", password: undefined }, app: { user: "app_runtime", password: undefined }, otp: { user: "otp_dispatch_runtime", password: undefined } },
-      otpSender: "test", ipHashSecret: Buffer.alloc(32), trustProxyHops: 0,
+      otpSender: "test", ipHashSecret: Buffer.alloc(32), otpMacKey: Buffer.alloc(32, 1), trustProxyHops: 0,
     };
     const dbs = new DbService(cfg);
     const check = () => checkSecurityParams(dbs, cfg).then(() => "DITERIMA", (e) => (e instanceof ConfigError ? "DITOLAK" : "ERROR"));

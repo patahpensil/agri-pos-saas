@@ -26,6 +26,7 @@ export interface AppConfig {
   };
   otpSender: OtpSenderKind;
   ipHashSecret: Buffer;
+  otpMacKey: Buffer;
   trustProxyHops: number;
 }
 
@@ -88,9 +89,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     otpSender = "test";
   }
 
+  const macRaw = req(env, "OTP_MAC_KEY", problems);
+  const otpMacKey = Buffer.from(macRaw, "utf8");
+  if (macRaw !== "" && otpMacKey.length < 32) problems.push("OTP_MAC_KEY minimal 32 byte");
+
   const secretRaw = req(env, "IP_HASH_SECRET", problems);
   const ipHashSecret = Buffer.from(secretRaw, "utf8");
   if (secretRaw !== "" && ipHashSecret.length < 32) problems.push("IP_HASH_SECRET minimal 32 byte");
+  if (macRaw !== "" && macRaw === secretRaw) problems.push("OTP_MAC_KEY dan IP_HASH_SECRET wajib berbeda");
 
   const cfg: AppConfig = {
     mode,
@@ -106,6 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     },
     otpSender,
     ipHashSecret,
+    otpMacKey,
     trustProxyHops: env.TRUST_PROXY_HOPS === undefined ? 0 : int(env, "TRUST_PROXY_HOPS", problems, 0, 5),
   };
 

@@ -1,5 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { DbService } from "../db/db.service";
+import { CONFIG } from "../tokens";
+import { AppConfig } from "../config/config";
 import { db, notFound } from "../common/errors";
 import { isUuid, parseBody, schemas } from "../common/validation";
 import { AuthedRequest, SessionGuard } from "../auth/session.guard";
@@ -10,6 +12,7 @@ import { dispatchOtps, OTP_SENDER, OtpSender } from "../auth/otp-sender";
 @UseGuards(SessionGuard)
 export class StaffController {
   constructor(
+    @Inject(CONFIG) private readonly cfg: AppConfig,
     @Inject(DbService) private readonly dbs: DbService,
     @Inject(OTP_SENDER) private readonly sender: OtpSender,
   ) {}
@@ -41,7 +44,7 @@ export class StaffController {
         c.query<{ id: string }>("select app.staff_invite($1, $2) as id", [b.phone, b.displayName]),
       ),
     );
-    await dispatchOtps(this.dbs, this.sender);
+    await dispatchOtps(this.dbs.otp, this.sender, this.cfg.otpMacKey);
     return { staffId: r.rows[0].id, state: "PENDING_ACTIVATION" };
   }
 

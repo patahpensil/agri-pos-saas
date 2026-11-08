@@ -3,13 +3,13 @@ import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { setLogSink } from "../src/common/log";
 import { TestOtpSender } from "../src/auth/otp-sender";
-import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, admin, eq, makePro, newDevice, newPhone, ok, test } from "./harness";
+import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, makePro, newDevice, newPhone, ok, test } from "./harness";
 
 const K = "API";
 const LOGS: string[] = [];
 let base = "";
 const sender = new TestOtpSender();
-const SECRETS = new Set<string>();   // token, OTP, sandi yang terbit selama uji -> dicari di log (T-SEC-03)
+const SECRETS = new Set<string>([TEST_OTP_MAC_KEY.toString()]);   // token, OTP, sandi, kunci -> dicari di log (T-SEC-03)
 
 interface Res { status: number; body: Record<string, unknown>; text: string }
 
@@ -72,6 +72,7 @@ export async function apiTests(): Promise<void> {
     },
     otpSender: "test",
     ipHashSecret: Buffer.from("TEST_ONLY_ip_hash_secret_for_api_tests_0123456789"),
+    otpMacKey: TEST_OTP_MAC_KEY,
     trustProxyHops: 0,
   };
   const { app, db } = await createApp(cfg, { otpSender: sender });
@@ -352,7 +353,74 @@ export async function apiTests(): Promise<void> {
       return "live 200, ready 200, tanpa detail";
     });
 
-    await test("T-SEC-03", "uji log", "Log tidak memuat OTP, sandi, token, atau nomor HP utuh", async () => {
+    await test("AUD-OTP-01", K, "OTP lewat API: pengirim sah menerima kode, sekali pakai, tidak ada di respons/log", async () => {
+      const phone = newPhone();
+      const start = await http("POST", "/auth/register/start", { phone });
+      const code = otpOf(phone);
+      ok(!start.text.includes(code), "kode di respons");
+      const body = { phone, code, password: PW, businessName: "Kios OTP API", timezone: "Asia/Makassar", deviceId: newDevice() };
+      const first = await http("POST", "/auth/register/verify-otp", body);
+      const replay = await http("POST", "/auth/register/verify-otp", { ...body, businessName: "Lagi" });
+      eq(first.status, 201, "pakai pertama");
+      eq(replay.status, 400, "replay");
+      ok(!replay.text.includes(code), "kode di error");
+      const all = LOGS.join("\n");
+      ok(!all.includes(code) && !all.includes(TEST_OTP_MAC_KEY.toString()), "kode/kunci di log");
+      return "kode diterima pengirim sah; 201 lalu replay 400; kode & kunci tidak ada di respons/error/log";
+    });
+
+    await test("AUD-SESSION-01", K, "Login API serentak HP A & B (50 putaran): tepat satu token tetap berlaku", async () => {
+      let bad = 0;
+      for (let round = 0; round < 50; round++) {
+        const o = await registerOwner(`Kios Sesi API ${round}`);
+        await admin("update iam.session set revoked_at=now(), revoke_reason='LOGOUT' where tenant_id=$1 and revoked_at is null", [o.tenant]);
+        const [ra, rb] = await Promise.all([
+          http("POST", "/auth/login", { phone: o.phone, password: PW, deviceId: `apiA-${round}-xxxx` }),
+          http("POST", "/auth/login", { phone: o.phone, password: PW, deviceId: `apiB-${round}-xxxx` }),
+        ]);
+        const sa = (await http("GET", "/tenant/me", undefined, ra.body.token as string)).status;
+        const sb = (await http("GET", "/tenant/me", undefined, rb.body.token as string)).status;
+        const n = (await admin<{ n: number }>("select count(*)::int n from iam.session where tenant_id=$1 and revoked_at is null", [o.tenant]))[0].n;
+        if (ra.status !== 200 || rb.status !== 200 || n !== 1 || [sa, sb].filter((s) => s === 200).length !== 1) bad++;
+      }
+      eq(bad, 0, "putaran dengan dua perangkat aktif / anomali");
+      return "50/50 putaran: tepat satu token 200, lainnya 401; 1 sesi aktif";
+    });
+
+    await test("AUD-LOGIN-01", K, "50 login salah serentak lewat API: 5x401 lalu 45x429; sesudahnya sandi benar tetap 429", async () => {
+      const o = await registerOwner();
+      const out: string[] = [];
+      for (const [label, phone] of [["terdaftar", o.phone], ["tidak terdaftar", newPhone()]] as const) {
+        const res = await Promise.all(Array.from({ length: 50 }, (_, i) => http("POST", "/auth/login", { phone, password: `salah-api-${i}-x`, deviceId: newDevice() })));
+        const c401 = res.filter((r) => r.status === 401).length;
+        const c429 = res.filter((r) => r.status === 429).length;
+        const after = await http("POST", "/auth/login", { phone, password: PW, deviceId: newDevice() });
+        eq(c401, 5, `${label}: 401`);
+        eq(c429, 45, `${label}: 429`);
+        eq(after.status, 429, `${label}: sesudahnya`);
+        out.push(`${label}: 5x401/45x429/lalu 429`);
+      }
+      return out.join("; ");
+    });
+
+    await test("AUD-LOCK-01", K, "LOCKED_GRACE lewat API: undang 403, cabut sesi/nonaktifkan Admin/logout 204", async () => {
+      const o = await registerOwner();
+      await makePro(o.tenant);
+      const a = await addAdmin(o);
+      await admin("update platform.subscription set activated_at=now()-interval '31 days', expires_at=now()-interval '1 hour', grace_deadline=now()+interval '29 days' where tenant_id=$1", [o.tenant]);
+      const me = await http("GET", "/tenant/me", undefined, o.token);
+      const inv = await http("POST", "/staff", { phone: newPhone(), displayName: "Baru" }, o.token);
+      const [as] = await admin<{ id: string }>("select id from iam.session where membership_id=$1 and revoked_at is null limit 1", [a.id]);
+      const rev = await http("POST", `/auth/sessions/${as.id}/revoke`, {}, o.token);
+      const deact = await http("POST", `/staff/${a.id}/deactivate`, {}, o.token);
+      const out = await http("POST", "/auth/logout", {}, o.token);
+      eq(me.body.effectiveStatus, "LOCKED_GRACE", "status");
+      ok(inv.status === 403 && inv.body.code === "TENANT_LOCKED", `undang: ${inv.status}`);
+      ok(rev.status === 204 && deact.status === 204 && out.status === 204, `${rev.status},${deact.status},${out.status}`);
+      return "undang 403 TENANT_LOCKED; cabut sesi 204; nonaktifkan Admin 204; logout 204";
+    });
+
+    await test("T-SEC-03", "uji log","Log tidak memuat OTP, sandi, token, atau nomor HP utuh", async () => {
       const all = LOGS.join("\n");
       const leaks = [...SECRETS].filter((s) => s.length >= 6 && all.includes(s));
       const phones = all.match(/\+62[0-9]{8,13}/g) ?? [];

@@ -90,7 +90,7 @@ jobs:
         working-directory: backend
         run: npm run build
 
-      - name: Uji langsung ke PostgreSQL (unit, startup, DB, pooler, API)
+      - name: Uji langsung ke PostgreSQL (unit, startup, DB, audit, pooler, API)
         working-directory: backend
         env:
           TEST_TARGET: direct
@@ -103,12 +103,12 @@ jobs:
           TEST_RESULTS_DIR: results
         run: node dist/test/run.js
 
-      - name: Uji lewat PgBouncer mode transaksi (DB, pooler, API)
+      - name: Uji lewat PgBouncer mode transaksi (DB, audit, pooler, API)
         if: always()
         working-directory: backend
         env:
           TEST_TARGET: pgbouncer
-          TEST_SUITES: db,pooler,api
+          TEST_SUITES: db,aud,pooler,api
           TEST_DB_NAME: ${{ env.DB }}
           TEST_RUNTIME_HOST: 127.0.0.1
           TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
@@ -118,6 +118,30 @@ jobs:
           TEST_ADMIN_USER: postgres
           TEST_RESULTS_DIR: results
         run: node dist/test/run.js
+
+      - name: Uji mutasi terisolasi (kontrol dihapus -> uji terkait wajib FAIL)
+        if: always()
+        env:
+          PGHOST: ${{ env.PGSOCK }}
+          PGUSER: postgres
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          RESULTS_DIR: ${{ github.workspace }}/backend/results
+        run: |
+          export PGPORT=$PGPORT_DIRECT
+          rc=0
+          bash db/test/mutation.sh SESSION_LOCK,LOGIN_RESERVE AUD-SESSION-01 || rc=1
+          bash db/test/mutation.sh LOGIN_RESERVE AUD-LOGIN-01 || rc=1
+          bash db/test/mutation.sh OTP_EXPIRY AUD-OTP-02 || rc=1
+          bash db/test/mutation.sh LOCK_INVITE AUD-LOCK-01 || rc=1
+          bash db/test/mutation.sh ISSUE_GRANT SEC-FIX-01,T-DB-04 || rc=1
+          bash db/test/mutation.sh NO_FORCE T-DB-02 || rc=1
+          # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
+          bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
+          exit $rc
 
       - name: Gerbang hasil (semua ID wajib PASS di kedua target)
         if: always()

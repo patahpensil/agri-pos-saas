@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "pg";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT,
   admin, asActor, asRole, claimCode, eq, errOf, inviteAndActivateAdminSql, makePro, newDevice, newPhone, ok,
-  registerOwnerSql, rolePool, test,
+  regVerify, registerOwnerSql, rolePool, test,
 } from "./harness";
 
 const K = "integrasi DB";
@@ -28,7 +28,7 @@ const ALLOW: Record<string, string[]> = {
     "app.logout", "app.session_list", "app.session_revoke", "app.staff_deactivate", "app.staff_invite",
     "app.staff_list", "app.tenant_me",
   ],
-  otp_dispatch_runtime: ["iam.otp_dispatch_claim"],
+  otp_dispatch_runtime: ["iam.otp_dispatch_ack", "iam.otp_dispatch_claim", "iam.otp_dispatch_fail", "iam.otp_dispatch_set_code"],
 };
 
 export async function dbTests(): Promise<void> {
@@ -107,7 +107,7 @@ export async function dbTests(): Promise<void> {
     const [sb] = await admin<{ id: string }>("select id from platform.subscription where tenant_id=$1", [b.tenant]);
     const r = {
       session: await errOf(admin("insert into iam.session(tenant_id,token_hash,user_id,membership_id,device_id,auth_at,expires_at) values ($1, sha256('x'::bytea||gen_random_uuid()::text::bytea), $2, $3, 'dev-xxxxxxxx', now(), now()+interval '1 hour')", [a.tenant, ua.id, mb.id])),
-      challenge: await errOf(admin("insert into iam.otp_challenge(purpose,phone_hash,tenant_id,membership_id,code_hash,expires_at,max_attempts) values ('ACTIVATE_ADMIN','\\x00',$1,$2,'x',now()+interval '1 minute',1)", [a.tenant, mb.id])),
+      challenge: await errOf(admin("insert into iam.otp_challenge(purpose,phone_hash,tenant_id,membership_id,expires_at,max_attempts) values ('ACTIVATE_ADMIN','\\x00',$1,$2,now()+interval '1 minute',1)", [a.tenant, mb.id])),
       entitlement: await errOf(admin("insert into platform.entitlement_event(tenant_id,subscription_id,kind,effective_at) values ($1,$2,'FREE_STARTED',now())", [a.tenant, sb.id])),
     };
     for (const [k, v] of Object.entries(r)) ok(v.startsWith("23503"), `${k}: ${v}`);
@@ -144,8 +144,9 @@ export async function dbTests(): Promise<void> {
     await admin(`drop database ${db}`);
     ok(run.status !== 0, `exit=${run.status}`);
     ok(!/Migrasi selesai/.test(run.stdout), "migrate.sh mencetak selesai");
-    eq(applied, 5, "migrasi tercatat sebelum file rusak");
-    return `exit=${run.status}; 5 migrasi sah tercatat, 0099 ditolak`;
+    const valid = readdirSync(dir).filter((f) => f.endsWith(".sql") && f !== "0099_broken.sql").length;
+    eq(applied, valid, "migrasi tercatat sebelum file rusak");
+    return `exit=${run.status}; ${valid} migrasi sah tercatat, 0099 ditolak`;
   });
 
   // ---------------------------------------------------------------- TEMUAN-01
@@ -163,7 +164,7 @@ export async function dbTests(): Promise<void> {
     const [l] = await asRole<{ r_status: string; r_token: string | null }>("auth_runtime", "select * from iam.login($1,'sandi-salah-xx',$2)", [o.phone, newDevice()]);
     eq(l.r_status, "INVALID_CREDENTIALS", "login tanpa sandi benar");
     ok(l.r_token === null, "token terbit tanpa sandi");
-    const [v] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,'123456',$2,'Palsu','Asia/Makassar',$3)", [newPhone(), PW, newDevice()]);
+    const [v] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'Palsu','Asia/Makassar',$4)", [newPhone(), Buffer.alloc(32, 7), PW, newDevice()]);
     eq(v.r_status, "OTP_INVALID", "registrasi tanpa challenge OTP");
     const after = (await admin<{ n: number }>("select count(*)::int n from iam.session"))[0].n;
     eq(after, before, "jumlah sesi berubah tanpa autentikasi sah");
@@ -176,16 +177,16 @@ export async function dbTests(): Promise<void> {
     await asRole("auth_runtime", "select iam.register_start($1)", [p1]);
     const code = await claimCode(p1);
     const fake = code === "000000" ? "111111" : "000000";
-    const [f] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p1, fake, PW, newDevice()]);
+    const [f] = await regVerify(p1, fake, 'K', newDevice());
     // OTP kedaluwarsa (benar tapi lewat waktu)
     await admin("update iam.otp_challenge set created_at = now() - interval '1 hour', expires_at = now() - interval '59 minutes' where phone_hash = sha256(convert_to($1,'UTF8')) and voided_at is null", [p1]);
-    const [x] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p1, code, PW, newDevice()]);
+    const [x] = await regVerify(p1, code, 'K', newDevice());
     // Replay OTP yang sudah terpakai
     const p2 = newPhone();
     await asRole("auth_runtime", "select iam.register_start($1)", [p2]);
     const c2 = await claimCode(p2);
-    const [ok1] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p2, c2, PW, newDevice()]);
-    const [rep] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K2','Asia/Makassar',$4)", [p2, c2, PW, newDevice()]);
+    const [ok1] = await regVerify(p2, c2, 'K', newDevice());
+    const [rep] = await regVerify(p2, c2, 'K2', newDevice());
     // Token karangan, token dicabut, token kedaluwarsa
     const o = await registerOwnerSql();
     const forged = await errOf(asActor("a".repeat(64), "select app.tenant_me()"));
@@ -214,7 +215,7 @@ export async function dbTests(): Promise<void> {
     const wrong = code === "000000" ? "111111" : "000000";
     const counts: number[] = [];
     for (let i = 0; i < 3; i++) {
-      await asRole("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p, wrong, PW, newDevice()]);
+      await regVerify(p, wrong, 'K', newDevice());
       counts.push((await admin<{ n: number }>("select attempt_count n from iam.otp_challenge where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [p]))[0].n);
     }
     eq(counts.join(","), "1,2,3", "hitungan percobaan");
@@ -230,7 +231,7 @@ export async function dbTests(): Promise<void> {
     const wrong = code === "000000" ? "111111" : "000000";
     await admin("update iam.otp_challenge set max_attempts = 100 where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [p]);
     await Promise.all(Array.from({ length: 20 }, () =>
-      asRole("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p, wrong, PW, newDevice()])));
+      regVerify(p, wrong, 'K', newDevice())));
     const n = (await admin<{ n: number }>("select attempt_count n from iam.otp_challenge where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [p]))[0].n;
     eq(n, 20, "20 percobaan serentak");
     // batas percobaan (TEST_ONLY max 5): lewati batas lalu kode BENAR tetap ditolak
@@ -240,9 +241,9 @@ export async function dbTests(): Promise<void> {
     const w2 = c2 === "000000" ? "111111" : "000000";
     const st: string[] = [];
     for (let i = 0; i < 6; i++) {
-      st.push((await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p2, w2, PW, newDevice()]))[0].r_status);
+      st.push((await regVerify(p2, w2, 'K', newDevice()))[0].r_status);
     }
-    const [last] = await asRole<{ r_status: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'K','Asia/Makassar',$4)", [p2, c2, PW, newDevice()]);
+    const [last] = await regVerify(p2, c2, 'K', newDevice());
     eq(st.join(","), "OTP_INVALID,OTP_INVALID,OTP_INVALID,OTP_INVALID,OTP_LOCKED,OTP_LOCKED", "status percobaan");
     eq(last.r_status, "OTP_LOCKED", "kode benar setelah terkunci");
     return "20 percobaan serentak -> attempt_count=20; setelah 5 salah, kode benar tetap OTP_LOCKED";
@@ -259,7 +260,7 @@ export async function dbTests(): Promise<void> {
     await admin(`create or replace function public.t_fail_inject() returns trigger language plpgsql as $$
       begin if (select business_name from platform.tenant where id = new.tenant_id) = 'FAIL_INJECT' then raise exception 'INJECTED'; end if; return new; end $$`);
     await admin("create trigger t_fail_inject before insert on platform.location for each row execute function public.t_fail_inject()");
-    const mid = await errOf(asRole("auth_runtime", "select * from iam.register_verify($1,$2,$3,'FAIL_INJECT','Asia/Makassar',$4)", [p, code, PW, newDevice()]));
+    const mid = await errOf(regVerify(p, code, 'FAIL_INJECT', newDevice()));
     await admin("drop trigger t_fail_inject on platform.location");
     await admin("drop function public.t_fail_inject()");
     const leftovers = (await admin<{ n: number }>(
@@ -267,7 +268,7 @@ export async function dbTests(): Promise<void> {
     ))[0].n;
     const [ch] = await admin<{ used: boolean; att: number }>("select used_at is not null used, attempt_count att from iam.otp_challenge where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [p]);
     // percobaan ulang dengan kode yang sama sekarang berhasil
-    const [r] = await asRole<{ r_status: string; r_tenant: string }>("auth_runtime", "select * from iam.register_verify($1,$2,$3,'Kios Bootstrap','Asia/Makassar',$4)", [p, code, PW, newDevice()]);
+    const [r] = await regVerify(p, code, 'Kios Bootstrap', newDevice());
     const [chk] = await admin<{ loc: number; own: number; sub: string; hours: number; ev: number; ses: number }>(
       `select (select count(*)::int from platform.location where tenant_id=$1 and active) loc,
               (select count(*)::int from iam.membership where tenant_id=$1 and role='OWNER' and state='ACTIVE') own,

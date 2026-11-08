@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { randomInt } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { dispatchOtps, otpMac, OtpPurpose, TestOtpSender } from "../src/auth/otp-sender";
 import { join } from "node:path";
 
 export type Status = "PASS" | "FAIL" | "BELUM DIUJI";
@@ -39,7 +40,10 @@ export function eq<T>(actual: T, expected: T, msg: string): void {
   if (actual !== expected) throw new Fail(`${msg}: harapan=${String(expected)} aktual=${String(actual)}`);
 }
 
+const ONLY = process.env.TEST_ONLY_IDS ? new Set(process.env.TEST_ONLY_IDS.split(",")) : null;
+
 export async function test(id: string, kind: string, title: string, fn: () => Promise<string | void>): Promise<void> {
+  if (ONLY && !ONLY.has(id)) return;   // dipakai uji mutasi: hanya ID terkait yang dijalankan
   const t0 = Date.now();
   try {
     const d = await fn();
@@ -127,11 +131,29 @@ export function newDevice(): string {
 }
 export const PW = "sandi-uji-panjang-1";
 
+// Kunci MAC OTP khusus uji. Kunci produksi wajib dari luar repo (OTP_MAC_KEY).
+export const TEST_OTP_MAC_KEY = Buffer.from("TEST_ONLY_otp_mac_key_for_tests_0123456789abcdef");
+export const harnessSender = new TestOtpSender();
+
+export function mac(purpose: OtpPurpose, phone: string, code: string): Buffer {
+  return otpMac(TEST_OTP_MAC_KEY, purpose, phone, code);
+}
+
+// Menjalankan worker pengirim sah (role otp_dispatch_runtime) lalu mengambil kode dari pengirim uji.
 export async function claimCode(phone: string): Promise<string> {
-  const rows = await asRole<{ r_phone: string; r_code: string }>("otp_dispatch_runtime", "select * from iam.otp_dispatch_claim(200)");
-  const hit = rows.filter((r) => r.r_phone === phone).pop();
-  ok(hit, `kode OTP untuk ${phone} tidak ada di kotak keluar`);
-  return hit.r_code;
+  await dispatchOtps(rolePool("otp_dispatch_runtime"), harnessSender, TEST_OTP_MAC_KEY, 200);
+  const code = harnessSender.last(phone);
+  ok(code, `kode OTP untuk ${phone} tidak terkirim`);
+  return code;
+}
+
+// register_verify dengan MAC kode (seperti backend).
+export async function regVerify(phone: string, code: string, businessName: string, device: string, password = PW) {
+  return asRole<{ r_status: string; r_token: string; r_tenant: string }>(
+    "auth_runtime",
+    "select * from iam.register_verify($1,$2,$3,$4,'Asia/Makassar',$5)",
+    [phone, mac("REGISTER_OWNER", phone, code), password, businessName, device],
+  );
 }
 
 export interface Owner {
@@ -147,11 +169,7 @@ export async function registerOwnerSql(businessName = "Kios Uji"): Promise<Owner
   const device = newDevice();
   await asRole("auth_runtime", "select iam.register_start($1)", [phone]);
   const code = await claimCode(phone);
-  const [r] = await asRole<{ r_status: string; r_token: string; r_tenant: string }>(
-    "auth_runtime",
-    "select * from iam.register_verify($1,$2,$3,$4,'Asia/Makassar',$5)",
-    [phone, code, PW, businessName, device],
-  );
+  const [r] = await regVerify(phone, code, businessName, device);
   eq(r.r_status, "OK", "registrasi owner");
   return { phone, token: r.r_token, tenant: r.r_tenant, device };
 }
@@ -171,7 +189,7 @@ export async function inviteAndActivateAdminSql(owner: Owner): Promise<{ phone: 
   const [r] = await asRole<{ r_status: string; r_token: string }>(
     "auth_runtime",
     "select * from iam.activate_admin($1,$2,$3,$4)",
-    [phone, code, PW, device],
+    [phone, mac("ACTIVATE_ADMIN", phone, code), PW, device],
   );
   eq(r.r_status, "OK", "aktivasi admin");
   return { phone, token: r.r_token, membership: inv.id, device };

@@ -6,7 +6,7 @@ import { AppConfig } from "../config/config";
 import { DbService } from "../db/db.service";
 import { AppError, db, notFound, rateLimited } from "../common/errors";
 import { isUuid, parseBody, schemas } from "../common/validation";
-import { dispatchOtps, OTP_SENDER, OtpSender } from "./otp-sender";
+import { dispatchOtps, OTP_SENDER, OtpSender, otpMac } from "./otp-sender";
 import { AuthedRequest, SessionGuard } from "./session.guard";
 
 type IpKind = "IP_REGISTER" | "IP_LOGIN" | "IP_ACTIVATE";
@@ -36,7 +36,7 @@ export class AuthController {
     await this.ipGate(req, "IP_REGISTER");
     const r = await db(this.dbs.auth.query<{ s: string }>("select iam.register_start($1) as s", [b.phone]));
     if (r.rows[0].s === "RATE_LIMITED") throw rateLimited();
-    await dispatchOtps(this.dbs, this.sender);
+    await dispatchOtps(this.dbs.otp, this.sender, this.cfg.otpMacKey);
     return { status: "OTP_SENT_IF_ELIGIBLE" };
   }
 
@@ -48,7 +48,7 @@ export class AuthController {
     const r = await db(
       this.dbs.auth.query<{ r_status: string; r_token: string; r_expires_at: Date; r_tenant: string }>(
         "select * from iam.register_verify($1, $2, $3, $4, $5, $6)",
-        [b.phone, b.code, b.password, b.businessName, b.timezone, b.deviceId],
+        [b.phone, otpMac(this.cfg.otpMacKey, "REGISTER_OWNER", b.phone, b.code), b.password, b.businessName, b.timezone, b.deviceId],
       ),
     );
     const row = r.rows[0];
@@ -82,7 +82,7 @@ export class AuthController {
     const r = await db(
       this.dbs.auth.query<{ r_status: string; r_token: string; r_expires_at: Date }>(
         "select * from iam.activate_admin($1, $2, $3, $4)",
-        [b.phone, b.code, b.password, b.deviceId],
+        [b.phone, otpMac(this.cfg.otpMacKey, "ACTIVATE_ADMIN", b.phone, b.code), b.password, b.deviceId],
       ),
     );
     const row = r.rows[0];
