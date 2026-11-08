@@ -1,0 +1,4 @@
+[PASS] P-01: kebocoran=0/300
+[PASS] P-02: klien tanpa konteks melihat data A pada 50/50 percobaan
+[PASS] P-03: 40/40 putaran benar
+[PASS] P-04: OK

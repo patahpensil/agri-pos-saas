@@ -1,0 +1,4 @@
+== PostgreSQL utama di port 55432
+== PgBouncer mode transaksi di 127.0.0.1:6432
+== Dependensi
+Siap. Jalankan: bash scripts/run_all.sh

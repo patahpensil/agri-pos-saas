@@ -1,0 +1,31 @@
+== Uji database T-01..T-10 + tambahan + beban
+[PASS] X-LOAD-1000: hasil={'SUKSES': 500, 'INSUFFICIENT_STOCK': 500}; stok akhir=0; HPP+sisa nilai=250000; p50=13801 ms, p95=14159 ms, durasi=14.4 s
+
+PASS 31/31
+== Uji pooler mode transaksi (PgBouncer)
+[PASS] P-02: klien tanpa konteks melihat data A pada 50/50 percobaan
+[PASS] P-03: 40/40 putaran benar
+[PASS] P-04: OK
+== Uji API langsung ke PostgreSQL
+[PASS] API-14: pertama 201; isi beda 422 IDEMPOTENCY_KEY_REUSED; retry identik 201 sama=true; stok 20→19
+
+PASS 15/15
+== Uji API lewat PgBouncer
+[PASS] API-14: pertama 201; isi beda 422 IDEMPOTENCY_KEY_REUSED; retry identik 201 sama=true; stok 20→19
+
+PASS 15/15
+== Uji PITR (WAL + recovery_target_time + tombstone)
+ "catatan_RPO": "Transaksi KEEP di t3 (setelah T) tidak ada di hasil pemulihan \u2014 ini kehilangan data yang sesuai titik pemulihan yang dipilih.",
+ "status": "PASS"
+}
+== Uji meta: setup wajib gagal pada migrasi salah
+[PASS] META-01: exit=3; ERROR:  relation "t" already exists
+
+================ RINGKASAN ================
+api_results_direct.json          15/15 PASS
+api_results_pgbouncer.json       15/15 PASS
+db_results.json                  31/31 PASS
+meta_results.json                1/1 PASS
+pitr_results.json                1/1 PASS
+pooler_results.json              4/4 PASS
+TOTAL: 67/67 PASS

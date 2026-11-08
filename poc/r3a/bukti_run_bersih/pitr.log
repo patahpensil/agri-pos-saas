@@ -1,0 +1,14 @@
+{
+ "aplikasi_bisa_masuk_saat_restore": false,
+ "schema_ada": true,
+ "keep_sale_sebelum_T": 1,
+ "gone_muncul_kembali": 1,
+ "gone_setelah_tombstone": 0,
+ "sisa_baris_gone": 0,
+ "stok_keep": 9,
+ "recovery_selesai": true,
+ "keep_bisa_transaksi_setelah_dibuka": true,
+ "target_time": "2026-11-08T15:14:14.754198+08:00",
+ "catatan_RPO": "Transaksi KEEP di t3 (setelah T) tidak ada di hasil pemulihan \u2014 ini kehilangan data yang sesuai titik pemulihan yang dipilih.",
+ "status": "PASS"
+}

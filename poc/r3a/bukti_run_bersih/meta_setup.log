@@ -1,0 +1,2 @@
+== PostgreSQL utama di port 55442
+psql:/tmp/fresh/poc_repro/tests/fixtures/broken_migration.sql:4: ERROR:  relation "t" already exists

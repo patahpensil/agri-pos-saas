@@ -1,0 +1,250 @@
+[
+ {
+  "id": "T-01",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "Stok 1, dua kasir bersamaan, diulang 200x",
+  "harapan": "Maksimal satu berhasil",
+  "aktual": "200/200 putaran: tepat 1 sukses, stok 0, tidak negatif",
+  "status": "PASS"
+ },
+ {
+  "id": "T-02",
+  "jenis": "DB integration",
+  "kondisi": "Transfer Rp200.000 diterima, finalisasi gagal (stok habis)",
+  "harapan": "RECEIVED_UNMATCHED, bukan omzet",
+  "aktual": "finalisasi: INSUFFICIENT_STOCK; Sale=0; omzet 0->0; pengecualian (nominal,menunggu,jumlah baris)=(200000, 200000, 1)",
+  "status": "PASS"
+ },
+ {
+  "id": "T-03",
+  "jenis": "DB integration",
+  "kondisi": "Faktur 1jt, bayar 900rb, retur 250rb; refund 150rb transfer gagal lalu diulang",
+  "harapan": "Approval sama, tanpa posting dibayar ganda",
+  "aktual": "batal setelah terkirim: CANNOT_CANCEL_AFTER_SENT; approval baru: REFUND_CAP_EXCEEDED; attempt=2; posting dibayar=1; posting ke-2: INVALID_STATE; Rf=150000, Q=0, B=0",
+  "status": "PASS"
+ },
+ {
+  "id": "T-04",
+  "jenis": "DB integration",
+  "kondisi": "Baris 3 unit HPP Rp100, retur 1 unit x3",
+  "harapan": "Rp33 + Rp33 + Rp34",
+  "aktual": "HPP baris=100; retur=[33, 33, 34]; nilai stok pemeriksaan=100",
+  "status": "PASS"
+ },
+ {
+  "id": "T-05",
+  "jenis": "DB integration (lapisan database; lapisan API BELUM DIUJI)",
+  "kondisi": "Tenant A memakai ID objek tenant B",
+  "harapan": "Ditolak di lapisan database",
+  "aktual": "baca Sale B: 0; baca semua invoice: 0; ubah stok B: permission denied for table stock; sisip baris ber-tenant B: permission denied for table audit_event; retur faktur B dari A: LINE_NOT_FOUND; ubah masa langganan sendiri: permission denied for table tenant; tanpa konteks: baca Sale: 0; tanpa konteks: finalisasi: NO_TENANT_CONTEXT; stok B tetap 9",
+  "status": "PASS"
+ },
+ {
+  "id": "T-06",
+  "jenis": "DB integration",
+  "kondisi": "Masa hak 3 detik; transaksi ke-2 tertahan kunci hingga lewat batas",
+  "harapan": "Hanya commit sebelum batas yang sah",
+  "aktual": "cap waktu Sale < batas hak=True; sebelum batas: sukses; tertahan: ENTITLEMENT_EXPIRED; sesudah: ENTITLEMENT_EXPIRED; Sale=1; stok=9 (tanpa posting parsial)",
+  "status": "PASS"
+ },
+ {
+  "id": "T-06b",
+  "jenis": "DB integration (audit R2-02)",
+  "kondisi": "Fungsi finalisasi selesai sebelum batas; COMMIT ditahan 3,5 dtk melewati batas",
+  "harapan": "COMMIT ditolak; tidak ada posting",
+  "aktual": "fungsi sebelum batas=True; COMMIT: ENTITLEMENT_EXPIRED_AT_COMMIT; Sale=0; stok=10; kontrol: cap waktu commit < batas=True",
+  "status": "PASS"
+ },
+ {
+  "id": "T-07",
+  "jenis": "DB integration",
+  "kondisi": "Kunci idempotensi sama dikirim 3x bersamaan + 1x sesudahnya",
+  "harapan": "Tidak ada transaksi ganda",
+  "aktual": "ID Sale unik={410}; jumlah Sale=1; stok 10->8; kas=2000",
+  "status": "PASS"
+ },
+ {
+  "id": "T-08",
+  "jenis": "DB integration (pg_dump/pg_restore; PITR terkelola BELUM DIUJI)",
+  "kondisi": "Backup t0 memuat tenant yang lalu dihapus; restore ke DB baru",
+  "harapan": "Tenant tidak aktif kembali",
+  "aktual": "akses aplikasi ditutup selama restore=True; tenant di backup=1; setelah tombstone diterapkan=0; sisa baris=0; audit tenant lain utuh=True",
+  "status": "PASS"
+ },
+ {
+  "id": "T-09",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "Refund tunai Rp50.000, posting dikirim 2x bersamaan",
+  "harapan": "Kas berkurang sekali, audit tercatat",
+  "aktual": "posting sukses=1; kas 50000->0; audit REFUND_PAID=1; status=PAID_CASH",
+  "status": "PASS"
+ },
+ {
+  "id": "T-10",
+  "jenis": "DB integration (logika dokumen); printer & PDF di perangkat BELUM DIUJI",
+  "kondisi": "Cetak struk lalu 3x ulang/PDF",
+  "harapan": "Transaksi tidak difinalisasi ulang",
+  "aktual": "salinan=[False, True, True, True]; Sale=1; stok=4",
+  "status": "PASS"
+ },
+ {
+  "id": "X-01",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "Retur kedua & pembayaran refund bersamaan, 30x",
+  "harapan": "Invarian Q<=L terjaga, tidak hilang",
+  "aktual": "30/30 putaran: R=500.000, Rf=150.000, Q=0, B=-250.000",
+  "status": "PASS"
+ },
+ {
+  "id": "X-02",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "1 karton isi 12: buka karton vs jual karton bersamaan, 50x",
+  "harapan": "Hanya satu berhasil; ekuivalen = kolam nilai",
+  "aktual": "50/50 putaran konsisten",
+  "status": "PASS"
+ },
+ {
+  "id": "X-03",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "Admin menahan batch saat transaksi kasir masih terbuka",
+  "harapan": "Penahanan menunggu commit, lalu penjualan berikut diblokir",
+  "aktual": "penahanan menunggu=True; ditahan=4; siap jual=0; jual sesudah tahan: INSUFFICIENT_STOCK; nilai HELD+READY=4000",
+  "status": "PASS"
+ },
+ {
+  "id": "X-04",
+  "jenis": "DB integration",
+  "kondisi": "Refund 150rb tertunda; koreksi +100rb lalu -50rb",
+  "harapan": "Koreksi yang membuat Q>L ditolak",
+  "aktual": "koreksi +100rb: new row for relation \"invoice\" violates check constraint \"in; koreksi -50rb: diterima; Q=150000, L=200000",
+  "status": "PASS"
+ },
+ {
+  "id": "X-05",
+  "jenis": "DB integration (konkurensi)",
+  "kondisi": "Operator mengunci paket saat transaksi kasir berjalan",
+  "harapan": "Transaksi berjalan selesai utuh; berikutnya ditolak",
+  "aktual": "operator menunggu commit=True; transaksi berikutnya: ENTITLEMENT_LOCKED; Sale=1",
+  "status": "PASS"
+ },
+ {
+  "id": "X-06",
+  "jenis": "DB integration",
+  "kondisi": "Tenant A memanggil fungsi dengan ID objek milik B",
+  "harapan": "Semua ditolak, data B utuh",
+  "aktual": "refund faktur B: TARGET_NOT_FOUND; refund pengecualian B: TARGET_NOT_FOUND; buka karton produk B: PRODUCT_NOT_FOUND; jual produk B: PRODUCT_NOT_FOUND; koreksi faktur B: INVOICE_NOT_FOUND; cetak struk B: SALE_NOT_FOUND",
+  "status": "PASS"
+ },
+ {
+  "id": "X-07",
+  "jenis": "DB integration",
+  "kondisi": "Pengecualian Rp200.000: refund, dibayar, dana kembali, refund ulang",
+  "harapan": "Partisi selalu = 200.000; dana kembali menunggu Owner",
+  "aktual": "approval ganda: REFUND_CAP_EXCEEDED; setelah bayar=[0, 200000, 0, 0]; setelah kembali=[0, 0, 0, 200000]; refund ulang=[0, 0, 200000, 0]",
+  "status": "PASS"
+ },
+ {
+  "id": "X-08",
+  "jenis": "DB integration",
+  "kondisi": "Mengubah/menghapus ledger & audit",
+  "harapan": "Ditolak (termasuk superuser tanpa jalur purge)",
+  "aktual": "ubah ledger: permission denied for table inventory_ledger; hapus audit: permission denied for table audit_event; superuser hapus ledger: APPEND_ONLY: inventory_ledger tidak boleh diubah/dihapus",
+  "status": "PASS"
+ },
+ {
+  "id": "N-01",
+  "jenis": "Negatif — FK komposit lintas tenant",
+  "kondisi": "Referensi tenant A ke objek tenant B (termasuk via hak pemilik)",
+  "harapan": "Ditolak FK (23503); app_user tanpa DML",
+  "aktual": "payment A→Sale B: 23503; invoice A→Sale B (Sale B tanpa faktur): 23503; dokumen A→Sale B: 23503; refund A→pengecualian B: 23503; stok A→produk tak ada: 23503; app_user insert langsung: permission denied for table payment",
+  "status": "PASS"
+ },
+ {
+  "id": "N-02",
+  "jenis": "Negatif — buka karton tanpa baris LOOSE",
+  "kondisi": "2 karton isi 12, baris unit lepas belum ada",
+  "harapan": "Unit lepas dibuat; ekuivalen tetap 24",
+  "aktual": "buka-1: sealed=1, loose=12, kolam=24; buka-2 ok; buka-3: NO_SEALED_STOCK; ekuivalen akhir=24",
+  "status": "PASS"
+ },
+ {
+  "id": "N-03",
+  "jenis": "Negatif — idempotency key sama, payload berbeda",
+  "kondisi": "qty 1 lalu qty 3 dengan key sama; bersamaan; pengecualian nominal beda",
+  "harapan": "Ditolak IDEMPOTENCY_KEY_REUSED; retry identik tetap Sale yang sama",
+  "aktual": "isi beda: IDEMPOTENCY_KEY_REUSED; retry identik sama=True; bersamaan: ['SUKSES', 'IDEMPOTENCY_KEY_REUSED']; pengecualian: IDEMPOTENCY_KEY_REUSED; Sale=2; stok=8",
+  "status": "PASS"
+ },
+ {
+  "id": "N-04",
+  "jenis": "Negatif — nilai tidak sah",
+  "kondisi": "qty 0/negatif, nominal 0/negatif, keranjang kosong, retur berlebih, jenis target asing, bukti kosong",
+  "harapan": "Ditolak dengan kode jelas; saldo, stok, Sale tidak berubah",
+  "aktual": "12/12 ditolak sesuai kode; faktur tetap=True; stok tetap=1; Sale=1; Rf setelah bukti kosong=0",
+  "status": "PASS"
+ },
+ {
+  "id": "N-05",
+  "jenis": "Negatif — DML langsung oleh app_user",
+  "kondisi": "UPDATE/DELETE pada 18 tabel",
+  "harapan": "Semua permission denied",
+  "aktual": "semua ditolak",
+  "status": "PASS"
+ },
+ {
+  "id": "N-06",
+  "jenis": "Negatif — 12 fungsi dipanggil tanpa konteks tenant",
+  "kondisi": "Semua fungsi perubahan data",
+  "harapan": "NO_TENANT_CONTEXT",
+  "aktual": "semua ditolak NO_TENANT_CONTEXT",
+  "status": "PASS"
+ },
+ {
+  "id": "N-07",
+  "jenis": "Negatif — fungsi internal dipanggil app_user",
+  "kondisi": "audit/split/require_tenant",
+  "harapan": "permission denied",
+  "aktual": "select app.audit('x','y'): permission denied for function audit; select app.split(1,1,1): permission denied for function split; select app.require_tenant(): permission denied for function require_tenant",
+  "status": "PASS"
+ },
+ {
+  "id": "N-08",
+  "jenis": "Negatif — impersonasi tenant lewat SQL (audit R2-01)",
+  "kondisi": "app_user memalsukan konteks: GUC lama, token karangan, token tenant lain, token dicabut",
+  "harapan": "Tidak bisa membaca/mengubah data B; tabel sesi tertutup",
+  "aktual": "GUC lama app.tenant_id=B: baca B=0, ubah B=NO_TENANT_CONTEXT; GUC tenant B tingkat sesi: baca B=0, ubah B=NO_TENANT_CONTEXT; token karangan: baca B=0, ubah B=NO_TENANT_CONTEXT; token sah milik A: baca B=0, ubah B=INVOICE_NOT_FOUND; token B yang sudah dicabut: baca B=0, ubah B=NO_TENANT_CONTEXT; baca tabel sesi: permission denied for schema iam",
+  "status": "PASS"
+ },
+ {
+  "id": "N-09",
+  "jenis": "Negatif — otorisasi peran di database (audit R2-01)",
+  "kondisi": "Sesi ADMIN memanggil 6 fungsi khusus Owner langsung lewat SQL",
+  "harapan": "Semua FORBIDDEN_ROLE; Owner tetap bisa",
+  "aktual": "retur: FORBIDDEN_ROLE; koreksi: FORBIDDEN_ROLE; setujui refund: FORBIDDEN_ROLE; batalkan approval: FORBIDDEN_ROLE; catat refund dibayar: FORBIDDEN_ROLE; catat dana kembali: FORBIDDEN_ROLE; Owner koreksi=True; fungsi Admin yang sah tetap jalan={'jual': 'EMPTY_CART', 'tahan batch': True, 'tandai terkirim (tunai → INVALID_STATE)': 'INVALID_STATE'}",
+  "status": "PASS"
+ },
+ {
+  "id": "X-LOAD-POOL",
+  "jenis": "Load test eksperimen (pool 40 koneksi, 2 vCPU sandbox — BUKAN angka produksi)",
+  "kondisi": "1000 transaksi tersebar di 100 tenant lewat pool 40 koneksi",
+  "harapan": "Semua sukses, stok konsisten",
+  "aktual": "hasil={'SUKSES': 1000}; sisa stok=4000; p50=31 ms, p95=152 ms, throughput=824 transaksi/detik",
+  "status": "PASS"
+ },
+ {
+  "id": "X-LOAD-100",
+  "jenis": "Load test eksperimen (1 SKU panas, 2 vCPU sandbox — BUKAN angka produksi)",
+  "kondisi": "100 permintaan serentak membeli 1 unit dari stok 500",
+  "harapan": "Tanpa stok negatif/nilai hilang",
+  "aktual": "hasil={'SUKSES': 100}; stok akhir=400; HPP+sisa nilai=250000; p50=680 ms, p95=864 ms, durasi=0.9 s",
+  "status": "PASS"
+ },
+ {
+  "id": "X-LOAD-1000",
+  "jenis": "Load test eksperimen (1 SKU panas, 2 vCPU sandbox — BUKAN angka produksi)",
+  "kondisi": "1000 permintaan serentak membeli 1 unit dari stok 500",
+  "harapan": "Tanpa stok negatif/nilai hilang",
+  "aktual": "hasil={'SUKSES': 500, 'INSUFFICIENT_STOCK': 500}; stok akhir=0; HPP+sisa nilai=250000; p50=13801 ms, p95=14159 ms, durasi=14.4 s",
+  "status": "PASS"
+ }
+]

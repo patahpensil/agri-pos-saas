@@ -1,0 +1,4 @@
+; Hanya untuk PoC lokal (auth_type=trust). JANGAN dipakai di produksi.
+"app_user" ""
+"auth_svc" ""
+"postgres" ""
