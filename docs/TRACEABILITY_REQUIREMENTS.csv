@@ -1,0 +1,132 @@
+requirement_id,priority,summary,sad_module,implementation_status
+AUTH-01,MUST,Akun Owner dan Admin mempunyai identitas serta kredensial individu; akun kasir bersama dilarang pada baseline,Identity/RBAC,NOT_IMPLEMENTED
+AUTH-02,MUST,Registrasi Owner via nomor HP + OTP yang diverifikasi server; login rutin via sandi; pemulihan berlapis,Identity/RBAC,NOT_IMPLEMENTED
+AUTH-03,MUST,"Semua API mengecek aktor, tenant, role, status tenant, entitlement, waktu server dan konteks objek",Identity/RBAC,NOT_IMPLEMENTED
+AUTH-04,MUST,"Tindakan sensitif Owner memerlukan reautentikasi berbasis risiko, alasan, dokumen rujukan dan audit",Identity/RBAC,NOT_IMPLEMENTED
+AUTH-05,MUST,"Admin tidak boleh mengesahkan retur, refund, koreksi atau penyesuaian stok; namun boleh langsung menahan batch berisiko",Identity/RBAC,NOT_IMPLEMENTED
+AUTH-06,MUST,Sesi dapat dicabut server-side; pergantian perangkat tidak mempertahankan hak sesi lama,Identity/RBAC,NOT_IMPLEMENTED
+AUTH-07,TBD,Durasi kedaluwarsa pengajuan Owner dan notifikasi pengingat ditentukan dalam spesifikasi keamanan/operasional,Identity/RBAC,NOT_IMPLEMENTED
+ENT-01,MUST,"FREE dimulai saat verifikasi OTP Owner berhasil, berlaku persis 7 × 24 jam berdasar waktu server",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-02,MUST,FREE 1 Owner/1 lokasi; PRO 1 Owner + 1 Admin/1 lokasi; MAX belum ditentukan kapasitasnya,Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-03,MUST,"Backend menjadi sumber kebenaran periode entitlement, bukan field klien; pembayaran langganan harus terverifikasi dulu",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-04,MUST,"Pada finalisasi dekat waktu kedaluwarsa, validasi harus atomik terhadap batas waktu; tidak ada posting parsial",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-05,MUST,"FREE habis: kunci bisnis, masa tunggu 7 hari untuk ekspor dan bayar, lalu hapus dari database aktif",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-06,MUST,"PRO/MAX habis: H-7 peringatan, kunci bisnis, 30 hari untuk ekspor/perpanjang; tanpa peringatan tambahan saat jeda",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-07,MUST,Upgrade/perpanjangan sebelum penghapusan memulihkan hak tanpa menggandakan periode/data,Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-08,MUST,"Hak akses fitur dibatasi backend, khusus grosir/promo/opname dan fitur MAX",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-09,MUST,"Penghapusan aktif di akhir jeda, retensi backup terukur, tombstone di luar backup, pencegahan resurrect tenant",Subscription/Entitlement,NOT_IMPLEMENTED
+ENT-10,TBD,"Periode billing, kanal beli langganan, pembayaran/refund langganan dan metode aktivasi komersial belum final",Subscription/Entitlement,NOT_IMPLEMENTED
+PRD-01,MUST,"SKU unik per tenant; identitas produk meliputi nama, kategori, merek bila ada, satuan dasar dan barcode opsional",Catalog,NOT_IMPLEMENTED
+PRD-02,MUST,"Produk mendukung varian kemasan fisik dengan faktor konversi integer positif, barcode/harga tiap varian",Catalog,NOT_IMPLEMENTED
+PRD-03,MUST,"Stok awal harus diisi sebagai satu langkah pembuatan produk (boleh 0), terpisah bentuk tersegel/lepas dan batch",Catalog,NOT_IMPLEMENTED
+PRD-04,MUST,Stok awal menghasilkan ledger pembukaan tunggal; tidak dapat ditimpa melalui edit produk berikutnya,Catalog,NOT_IMPLEMENTED
+PRD-05,MUST,Varian kemasan yang telah dipakai dalam transaksi tidak boleh mengalami perubahan faktor isi secara retroaktif,Catalog,NOT_IMPLEMENTED
+PRD-06,MUST,Produk dengan kemasan yang tidak boleh dibuka tidak menampilkan/menjalankan aksi buka karton bahkan via API,Catalog,NOT_IMPLEMENTED
+PRD-07,MUST,Barang bernilai positif memerlukan basis biaya pembukaan untuk HPP; bonus bernilai nol perlu alasan/asal dan catatan valuasi,Catalog,NOT_IMPLEMENTED
+PRD-08,TBD,Metadata legal/registrasi pestisida hanya setelah persyaratan resmi diverifikasi,Catalog,NOT_IMPLEMENTED
+INV-01,MUST,"Setiap penerimaan stok nyata membuat mutasi ledger beserta pemasok, dokumen jika tersedia, biaya, lokasi, batch/expiry bila relevan, waktu dan aktor",Inventory,NOT_IMPLEMENTED
+INV-02,MUST,"Stok siap jual, pemeriksaan, ditahan, rusak, karantina/ditarik dan keluar dibedakan",Inventory,NOT_IMPLEMENTED
+INV-03,MUST,"Validasi tanggal kedaluwarsa dan blokir batch tidak aman berada di backend, bukan UI",Inventory,NOT_IMPLEMENTED
+INV-04,MUST,FEFO memberi saran batch layak dengan expiry terdekat; kasir mengonfirmasi batch fisik,Inventory,NOT_IMPLEMENTED
+INV-05,MUST,"Buka karton fisik: karton tersegel −1, unit lepas +n dengan batch/expiry asal; total ekuivalen/nilai tidak berubah",Inventory,NOT_IMPLEMENTED
+INV-06,MUST,Owner/Admin boleh menahan produk/batch berisiko segera; pelepasan harus Owner,Inventory,NOT_IMPLEMENTED
+INV-07,MUST (PRO),"Stok opname per item/batch/kemasan mencatat `counted_at`, `entered_at`, versi ledger dan hitungan fisik; disetujui Owner",Inventory,NOT_IMPLEMENTED
+INV-08,MUST,"Semua mutasi status, penerimaan, penjualan, retur, koreksi dan konversi konservatif/atomik; stok negatif dilarang",Inventory,NOT_IMPLEMENTED
+INV-09,MUST,Saldo cache/proyeksi dapat dibangun ulang dari ledger; ketidakcocokan mengeluarkan alert tanpa mengedit histori,Inventory,NOT_IMPLEMENTED
+INV-10,MUST (PRO),Pengembalian barang rusak ke pemasok dicatat sederhana tanpa modul klaim/kredit terintegrasi,Inventory,NOT_IMPLEMENTED
+INV-11,MUST (FREE),Penyesuaian stok dasar oleh Owner tetap wajib beralasan dan diaudit; **tutup hari dasar FREE mengikuti CASH-01–06 (K-1 = A)**,Inventory,NOT_IMPLEMENTED
+COST-01,MUST,"Moving weighted average per SKU per lokasi dalam unit dasar; nilai persediaan disimpan sebagai integer rupiah, rata-rata eksak",Cost Engine,NOT_IMPLEMENTED
+COST-02,MUST,"`nilai_beban = floor(nilai_sisa × qty_keluar / qty_sisa)`; bila stok habis, seluruh nilai tersisa diambil",Cost Engine,NOT_IMPLEMENTED
+COST-03,MUST,HPP yang dibebankan disimpan sebagai snapshot tiap baris transaksi; tidak diubah oleh penerimaan berikutnya,Cost Engine,NOT_IMPLEMENTED
+COST-04,MUST,**HPP retur = ⌊HPP baris tersisa × unit diretur ÷ unit baris tersisa⌋** berdasarkan snapshot historis baris asal; retur yang menghabiskan sisa unit baris mengambil **seluruh** sisa HPP baris. Nilai yang dikembalikan masuk status pemeriksaan; aturan pembagian sama dengan PPN retur (§6.3),Cost Engine,NOT_IMPLEMENTED
+COST-05,MUST,Perpindahan status stok memindahkan nilai deterministik tanpa mengakui rugi dua kali,Cost Engine,NOT_IMPLEMENTED
+COST-06,MUST,"Bila harga pokok tak dapat diverifikasi, laba kotor tidak boleh dipresentasikan sebagai angka pasti",Cost Engine,NOT_IMPLEMENTED
+COST-07,GATED,Kebijakan penurunan nilai/pemusnahan mengikuti penilaian akuntansi yang disahkan,Cost Engine,NOT_IMPLEMENTED
+POS-01,MUST,"Keranjang dapat disiapkan lokal, tetapi finalisasi hanya online dan melalui transaksi server atomik",POS Checkout,NOT_IMPLEMENTED
+POS-02,MUST,"Penjualan stok negatif, batch ditahan/kedaluwarsa dan pemakaian promo di luar hak selalu ditolak server",POS Checkout,NOT_IMPLEMENTED
+POS-03,MUST,"Harga server disnapshot, diperiksa ulang saat checkout; perubahan material meminta konfirmasi ulang",POS Checkout,NOT_IMPLEMENTED
+POS-04,MUST (PRO),"Harga grosir berdasarkan kuantitas dan Barang Diskon berkuota mengikuti harga valid terendah, tanpa penumpukan",POS Checkout,NOT_IMPLEMENTED
+POS-05,MUST (PRO),"Kuota promo hanya dikurangi untuk unit yang benar-benar mendapat harga promo, tidak direservasi di draft",POS Checkout,NOT_IMPLEMENTED
+POS-06,MUST,"Finalisasi memakai idempotency key, membuat satu Sale/ledger/dokumen untuk retry identik",POS Checkout,NOT_IMPLEMENTED
+POS-07,MUST,Kasir tidak dapat mengubah harga sesukanya atau memalsukan status paket/PPN melalui API,POS Checkout,NOT_IMPLEMENTED
+POS-08,MUST,Produk subsidi tidak masuk checkout POS umum,POS Checkout,NOT_IMPLEMENTED
+PAY-01,MUST,"Tunai, transfer, QRIS eksternal dan EDC dicatat manual setelah bukti resmi diperiksa",Payment/Receivables,NOT_IMPLEMENTED
+PAY-02,MUST,"Pembayaran campuran menyimpan metode, nominal, waktu, aktor, referensi bila ada dan status verifikasi tiap bagian",Payment/Receivables,NOT_IMPLEMENTED
+PAY-03,MUST,"Uang tunai diserahkan dan kembalian disimpan terpisah, penerimaan bersih hanya nilai yang ditahan toko",Payment/Receivables,NOT_IMPLEMENTED
+PAY-04,MUST,"Jumlah bagian pembayaran tidak melebihi total tagihan; selain kembalian tunai, tidak menciptakan deposit",Payment/Receivables,NOT_IMPLEMENTED
+PAY-05,MUST,"Pelanggan terdaftar wajib untuk tempo/parsial, jatuh tempo dicatat per faktur",Payment/Receivables,NOT_IMPLEMENTED
+PAY-06,MUST,Pelunasan mengurangi saldo faktur yang dipilih dan tidak menambah omzet atau mengurangi stok lagi,Payment/Receivables,NOT_IMPLEMENTED
+PAY-07,MUST,Transaksi pembayaran idempoten dan koreksi pembayaran memerlukan dokumen koreksi/otorisasi Owner,Payment/Receivables,NOT_IMPLEMENTED
+PAY-08,MUST,"Analitik piutang per barang adalah alokasi saldo faktur secara proporsional dengan residual deterministik, bukan utang resmi per item",Payment/Receivables,NOT_IMPLEMENTED
+PAY-09,MUST,Tautan WhatsApp penagihan manual dan pratinjau nomor/isi tidak mengklaim pesan sudah dikirim,Payment/Receivables,NOT_IMPLEMENTED
+EXC-01,MUST,"Uang masuk tanpa Sale sah direkam satu kali sebagai `RECEIVED_UNMATCHED` lengkap bukti, tenant, waktu, aktor; tanpa omzet/faktur fiktif",Payment Exceptions,NOT_IMPLEMENTED
+EXC-02,MUST,"Alokasi ke Sale baru hanya dalam sesi yang sama, satu jalur bisnis dan dengan persetujuan pembeli; tidak untuk belanja berikut hari",Payment Exceptions,NOT_IMPLEMENTED
+EXC-03,MUST,"Jika tidak ada Sale sah, Owner mengesahkan refund sesuai dana aktual, tanpa saldo deposit",Payment Exceptions,NOT_IMPLEMENTED
+EXC-04,MUST,"Saat refund v1 manual, `Transfer sudah dikirim` hanya status petugas; retry transfer boleh dalam approval sama, bukan approval baru",Payment Exceptions,NOT_IMPLEMENTED
+EXC-05,MUST,Pembayaran refund dikonfirmasi **dibayar** sekali per approval berdasarkan bukti dana benar-benar keluar,Payment Exceptions,NOT_IMPLEMENTED
+EXC-06,MUST,"Refund dana kembali yang telah diverifikasi menghasilkan `REFUND_RETURNED`, lalu nominal pengecualian kembali `RECEIVED_UNMATCHED` menunggu Owner",Payment Exceptions,NOT_IMPLEMENTED
+EXC-07,MUST,`RECEIVED_UNMATCHED` tanpa keputusan Owner memblokir tutup hari; carry-over refund tertunda hanya dengan persetujuan Owner,Payment Exceptions,NOT_IMPLEMENTED
+EXC-08,MUST,"Setiap mutasi pengecualian mempertahankan partisi total nominal diterima, tanpa partisi ganda",Payment Exceptions,NOT_IMPLEMENTED
+EXC-09,MUST,Manual retry/pencatatan berulang tidak menggandakan cash/bank; dana bank nyata dilacak di luar layar Sale,Payment Exceptions,NOT_IMPLEMENTED
+RET-01,MUST,Retur hanya pada Sale asal dan maksimal unit yang belum diretur; Owner menyetujui,Returns/Refunds,NOT_IMPLEMENTED
+RET-02,MUST,Barang retur ke pemeriksaan; HPP historis dan PPN snapshot dari transaksi asal,Returns/Refunds,NOT_IMPLEMENTED
+RET-03,MUST,"Retur mengurangi piutang dahulu; kelebihan menjadi kewajiban refund, bukan deposit",Returns/Refunds,NOT_IMPLEMENTED
+RET-04,MUST,"Koreksi final bersifat append-only bertanda +/- dan merujuk dokumen asal, tidak menimpa Sale",Returns/Refunds,NOT_IMPLEMENTED
+RET-05,MUST,"Rumus saldo `B = F+C−R−(P−Rf)`; piutang `max(B,0)`, refund terutang `max(−B,0)`",Returns/Refunds,NOT_IMPLEMENTED
+RET-06,MUST,"Persetujuan refund atomik: `Q + refund_baru ≤ L`, `L = max(−B,0)`; refund dibayar tidak dihitung dua kali",Returns/Refunds,NOT_IMPLEMENTED
+RET-07,MUST,"Pembayaran refund ≤ approval tertunda, satu pencatatan dibayar per approval; koreksi lain yang merusak invarian ditolak",Returns/Refunds,NOT_IMPLEMENTED
+RET-08,MUST,"Pada transfer manual tanpa tanda terkirim, Owner boleh membatalkan approval dengan reautentikasi; setelah tanda terkirim tidak membebaskan jatah",Returns/Refunds,NOT_IMPLEMENTED
+RET-09,MUST,Transfer gagal dapat diulang di bawah approval yang sama; hasil eksternal belum pasti tidak boleh diklaim gagal final,Returns/Refunds,NOT_IMPLEMENTED
+RET-10,MUST,"Dana refund kembali membuat `REFUND_RETURNED`: arus balik + pengurangan `Rf` efektif + hitung ulang hak refund, tanpa hapus histori",Returns/Refunds,NOT_IMPLEMENTED
+RET-11,MUST,"Pembatalan penjualan final hanya pengecualian sebelum barang diserahkan, dengan Owner; sudah diserahkan gunakan retur",Returns/Refunds,NOT_IMPLEMENTED
+RET-12,MUST,"Persetujuan Owner memeriksa versi objek, bukti, stok/kuota/nominal dan status saat akan diterapkan",Returns/Refunds,NOT_IMPLEMENTED
+CASH-01,MUST,"Pisahkan kas seharusnya, kas fisik terhitung dan selisih; jangan otomatis mengubah omzet",Cash Day,NOT_IMPLEMENTED
+CASH-02,MUST,Kas awal yang belum diperiksa diberi label `Saldo pembukaan sementara`,Cash Day,NOT_IMPLEMENTED
+CASH-03,MUST,"Rumus kas laci hanya peristiwa tunai nyata: tunai neto, refund tunai, beli stok tunai, pengeluaran, setor, pengambilan dan koreksi sah",Cash Day,NOT_IMPLEMENTED
+CASH-04,MUST,"Transfer/QRIS/EDC dan refund eksternal tidak mengubah kas laci; refund tertunda adalah kewajiban, bukan kas keluar",Cash Day,NOT_IMPLEMENTED
+CASH-05,MUST,"Owner menyetujui carry-over refund, disimpan pada laporan hari dan daftar tindak lanjut sampai terbayar",Cash Day,NOT_IMPLEMENTED
+CASH-06,MUST,Tutup hari **FREE dan PRO** memblokir pengecualian `RECEIVED_UNMATCHED` tanpa keputusan Owner,Cash Day,NOT_IMPLEMENTED
+CASH-07,MUST,Hari operasional memakai WIB/WITA/WIT tenant; waktu faktual UTC; koreksi akhir hari tetap dapat ditelusuri,Cash Day,NOT_IMPLEMENTED
+SUB-01,MUST,"Pencatatan penyaluran subsidi di modul terpisah, bukan POS umum atau sistem penebusan resmi",Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-02,MUST,Alokasi hanya angka administratif per periode; tidak menaikkan stok fisik,Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-03,MUST,Stok subsidi bertambah hanya dari penerimaan fisik dan terpisah dari barang nonsubsidi,Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-04,MUST,Identitas internal penyaluran hanya nama petani dan kelompok tani; tidak meminta NIK atau HP pada modul ini,Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-05,MUST,HET dari Owner dengan sumber dan tanggal efektif; backend melarang harga lebih tinggi dari HET pada tanggal penyaluran,Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-06,MUST,"Tanpa promosi/grosir POS umum, tanpa pemungutan PPN ulang oleh pengecer, tidak lebih HET",Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-07,GATED C-01,"Penyaluran tempo dan piutangnya disiapkan sebagai kebutuhan, tetapi **dinonaktifkan saat rilis** sampai konfirmasi tertulis kepatuhan",Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-08,MUST,"Laporan stok, penerimaan, penyaluran dan piutang subsidi terpisah menurut periode",Subsidized Fertilizer,NOT_IMPLEMENTED
+SUB-09,MUST,"UI menyatakan pencatatan internal, bukan integrasi penebusan/pelaporan pemerintah; kewajiban resmi tetap di luar aplikasi",Subsidized Fertilizer,NOT_IMPLEMENTED
+VAT-01,MUST,Owner mengendalikan sakelar `Gunakan PPN: Ya/Tidak` hanya dari Pengaturan,VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-02,MUST,"Persentase PPN diisi sendiri Owner, **tanpa nilai awal**; perubahan memiliki waktu efektif dan audit",VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-03,MUST,"Bila sakelar Tidak atau persen kosong, tidak ada PPN pada rekap; jika Ya + persen ada, berlaku cakupan barang",VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-04,MUST,Owner memilih `Semua barang` atau `Pilih barang`; subsidi selalu dikecualikan,VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-05,MUST,Tidak ada kontrol centang PPN per transaksi; kasir tidak dapat memodifikasi PPN via API,VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-06,MUST,"Kontrak POS: persen × jumlah harga barang kena PPN, dibulatkan rupiah terdekat (pecahan ≥0,50 ke atas)",VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-07,MUST,"PPN transaksi, persen efektif, alokasi *largest remainder* per baris, nilai sebelum pembulatan dan snapshot dicatat untuk retur",VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-08,MUST,Omzet dan laba kotor **tidak termasuk PPN**; piutang/tagihan memuat PPN sesuai transaksi; struk bukan Faktur Pajak resmi,VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-09,GATED C-02,"Sebelum fitur PPN go-live, uji metode POS dengan ketentuan resmi/Coretax: granularitas baris/faktur dan urutan DPP serta retur campuran",VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+VAT-10,MUST,Owner mendapat pemberitahuan bahwa pengaturan bukan verifikasi status pajak resmi dan tanggung jawab perpajakan tetap berlaku,VAT Settings/Tax Snapshot,NOT_IMPLEMENTED
+DOC-01,MUST,Sale final menghasilkan dokumen dengan nomor unik berurutan per tenant/jenis dokumen; gap sah bisa diaudit,Documents/Export,NOT_IMPLEMENTED
+DOC-02,MUST,"Struk berisi snapshot item/kemasan/harga, PPN bila aktif, total, pembayaran, piutang dan waktu; PDF tersedia",Documents/Export,NOT_IMPLEMENTED
+DOC-03,MUST,Cetak ulang bertanda `SALINAN` dan tidak memposting ulang Sale,Documents/Export,NOT_IMPLEMENTED
+DOC-04,MUST,"Cetak thermal opsional, kegagalan printer/PDF tidak membatalkan Sale yang sudah commit",Documents/Export,NOT_IMPLEMENTED
+DOC-05,MUST,Tautan WhatsApp hanya berbagi manual; tidak mengklaim pesan terkirim,Documents/Export,NOT_IMPLEMENTED
+DOC-06,MUST,Ekspor lengkap data usaha Owner tersedia selama entitlement dan masa jeda terkait,Documents/Export,NOT_IMPLEMENTED
+DOC-07,MUST,"Ekspor hanya dari tenant sah, dibatasi role Owner, diverifikasi ulang, dicatat di audit",Documents/Export,NOT_IMPLEMENTED
+DOC-08,TBD,"Format ekspor portabilitas rinci, batas pemrosesan, struktur file untuk arsip jangka panjang dan kapasitas storage ditentukan pada spesifikasi data",Documents/Export,NOT_IMPLEMENTED
+ANL-01,MUST,"Dashboard PRO memiliki ringkasan omzet bruto, penjualan bersih, uang diterima, kas, piutang, stok dan stok kritis",Analytics/Reporting,NOT_IMPLEMENTED
+ANL-02,MUST,HPP terjual dan laba kotor dipisah dari laba bersih; HPP belum terverifikasi tidak menghasilkan laba pasti,Analytics/Reporting,NOT_IMPLEMENTED
+ANL-03,MUST,Barang laris/kurang laris menurut jumlah/nilai/periode termasuk produk nol penjualan dengan aturan kelayakan produk baru yang akan dirinci,Analytics/Reporting,NOT_IMPLEMENTED
+ANL-04,MUST,Laporan promo menyebut kuota terpakai hanya bila harga promo benar-benar dipakai,Analytics/Reporting,NOT_IMPLEMENTED
+ANL-05,MUST,"Piutang dikelompokkan per faktur, pelanggan, status jatuh tempo; dapat dilihat sampai detail transaksi",Analytics/Reporting,NOT_IMPLEMENTED
+ANL-06,MUST,Penyaluran subsidi ditampilkan terpisah dari POS nonsubsidi,Analytics/Reporting,NOT_IMPLEMENTED
+ANL-07,MUST,"Dokumen pengecualian, refund belum dibayar, penahanan batch dan selisih kas/opname tampil terpisah dari omzet",Analytics/Reporting,NOT_IMPLEMENTED
+ANL-08,MUST (PRO),Filter periode dan produk/kategori; ekspor CSV/Excel/PDF untuk laporan PRO,Analytics/Reporting,NOT_IMPLEMENTED
+ANL-09,TBD,Target interval refresh dashboard dan definisi barang baru/kurang laris ditetapkan sebelum sign-off laporan,Analytics/Reporting,NOT_IMPLEMENTED
+PLAT-01,MUST,"Operator platform mengelola daftar tenant minimum, status paket, periode entitlement, invoice SaaS dan permintaan bantuan",Platform Console,NOT_IMPLEMENTED
+PLAT-02,MUST,"Verifikasi pembayaran langganan dilakukan oleh pihak yang berwenang, di server, dengan bukti dan idempotensi",Platform Console,NOT_IMPLEMENTED
+PLAT-03,MUST,"Peran keuangan platform hanya mengakses invoice SaaS, bukan transaksi pelanggan tenant",Platform Console,NOT_IMPLEMENTED
+PLAT-04,MUST,"Dukungan teknis tidak melihat data tenant tanpa grant Owner yang sah, berjangka, dapat dicabut dan diaudit",Platform Console,NOT_IMPLEMENTED
+PLAT-05,MUST,"Override paket/masa trial memerlukan alasan, batas waktu, identitas dan izin yang tepat",Platform Console,NOT_IMPLEMENTED
+PLAT-06,MUST,Back-office bukan fitur kasir dan tidak menjadi pembeda antara PRO dan MAX,Platform Console,NOT_IMPLEMENTED
+PLAT-07,TBD,"Bentuk back-office (web internal/mobile), struktur operator, dan cara bayar langganan ditentukan di desain teknis",Platform Console,NOT_IMPLEMENTED
