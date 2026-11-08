@@ -1,0 +1,13 @@
+nfr_id,summary,sad_module,verification_type,status
+NFR-01,Scan → item keranjang p95,Mobile POS UX,PERANGKAT_NYATA,NOT_VERIFIED
+NFR-02,Tekan Bayar → komit server p95,Checkout/Database,INTEGRASI_API_DB_PERFORMA,NOT_VERIFIED
+NFR-03,Uptime bulanan,Operations/Observability,MONITORING_OPERASIONAL,NOT_VERIFIED
+NFR-04,RPO data,Backup/DR,RESTORE_CLOUD,NOT_VERIFIED
+NFR-05,RTO layanan,Backup/DR,PEMULIHAN_CLOUD,NOT_VERIFIED
+NFR-06,Backup dan retensi maksimum,Backup/Erasure,RESTORE_RETENSI,NOT_VERIFIED
+NFR-07,Periode rekonsiliasi ledger,Ledger/Reconciliation,INTEGRASI_DB,NOT_VERIFIED
+NFR-08,Kapasitas tenant/storage/dokumen,Capacity/Storage,UJI_BEBAN,NOT_VERIFIED
+NFR-09,Batas sesi/OTP/permintaan API,IAM/API,UJI_KEAMANAN_API,NOT_VERIFIED
+NFR-10,SLA tindak lanjut refund tertunda,Refund/Operations,INTEGRASI_API,NOT_VERIFIED
+NFR-11,Keselarasan perangkat printer/scanner,Mobile/Hardware,PERANGKAT_NYATA,NOT_VERIFIED
+NFR-12,Keamanan mobile,Mobile Security,UJI_KEAMANAN_PERANGKAT,NOT_VERIFIED
