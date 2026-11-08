@@ -59,7 +59,7 @@
 | `biz.invoice_state` | `(tenant_id,sale_id)` PK, `f_idr`, `c_idr`, `r_idr`, `p_idr`, `rf_idr`, `q_pending_idr`, `version` | Q≤max(−B,0) **row-local** CHECK; updates only via posting functions; ledger as source |
 | `biz.sale_correction` | `(tenant_id,id)`, `sale_id`, `signed_delta_idr`, `tax_delta`, `reason`, `owner_approval_id` | append-only, recalculates invoice under lock |
 | `biz.return_header` / `return_line` | `(tenant_id,id)`, `sale_id`, `sale_line_id`, `qty_returned`, `value_idr`, `vat_return_idr`, `cost_return_idr`, `owner_approval` | snapshot from sale line; HPP/PPN residual; stock to INSPECTION |
-| `biz.unmatched_receipt` | `(tenant_id,id)`, `source_ref`, `total_received_idr`, `allocated_sale_idr`, `effective_refunded_idr`, `refund_pending_idr`, `unmatched_waiting_idr`, `status`, `verified_evidence` | CHECK amounts≥0 and sum=total; *one source event once* |
+| `biz.unmatched_receipt` | `(tenant_id,id)`, `source_ref`, `received_idr`, `sale_allocated_idr`, `paid_effective_idr`, `approved_pending_idr`, `waiting_idr`, `status`, `verified_evidence` | CHECK amounts≥0 and sum=total; *one source event once* |
 | `biz.exception_allocation` | `(tenant_id,id)`, `unmatched_id`, `sale_id`, `allocated_idr`, `session_id`, `buyer_confirmation` | single sale in original checkout session or choose refund, not customer deposit |
 | `biz.exception_carryover` | `(tenant_id,id)`, `unmatched_id`, `owner_approval`, `reason`, `follow_up_due` | carry-over pending refund only; pending unmatched without Owner decision blocks close day |
 | `biz.vat_setting_version` | `(tenant_id,id)`, `enabled bool`, `percent numeric NULL`, `coverage_mode`, `effective_at`, `owner_id` | no default percentage, `NULL` means off; subsidized excluded regardless |
@@ -92,7 +92,7 @@
 
 1. **Invariant 1 — `invoice_state`:** row local `CHECK(q_pending_idr >= 0 AND rf_idr >= 0 AND q_pending_idr <= GREATEST(-(f_idr+c_idr-r_idr-(p_idr-rf_idr)),0))`. Source ledger still authoritative and transaction reconciles both.
 2. **Invariant 2 — stock:** `CHECK(qty>=0)` and `CHECK(qty_base>=0 AND value_idr>=0 AND (qty_base>0 OR value_idr=0))`, posted under row locks. Inventory ledger signed delta and projection version sequence.
-3. **Invariant 3 — exception:** row local `CHECK(total_received_idr=allocated_sale_idr+effective_refunded_idr+refund_pending_idr+unmatched_waiting_idr)` with all ≥0.
+3. **Invariant 3 — exception:** row local `CHECK(received_idr=sale_allocated_idr+paid_effective_idr+approved_pending_idr+waiting_idr)` with all ≥0.
 4. **Invariant 4 — paid once:** `UNIQUE(tenant_id,approval_id)` on `refund_payment`; allow multiple `refund_attempt` but never second paid posting.
 5. **Invariant 5 — idempotency:** `UNIQUE(tenant_id,operation_scope,idempotency_key)`, store canonical payload hash/result; identical key+different body→409; include expiration rule that does not allow double-charge after deletion of idem row.
 6. **Invariant 6 — append-only business audit:** application role cannot UPDATE/DELETE event log; purge under separate audited offboarding account; don't disable triggers via replication role.
@@ -166,6 +166,8 @@ USING (tenant_id = app.authenticated_tenant());
 **G6 Purge/restore:** offboarding marks tenant locked/deleted, export full while allowed; tombstone durable outside primary failure domain; purge all tenant scoped tables through constrained process; verify zero remaining; restore must replay tombstones before service open; audit externally.
 
 ## H. Security/operational unresolved points
+
+- **Refund paid ≤ Owner approval (OPEN, perlu pengujian integrasi DB):** nilai `biz.refund_payment.amount_idr` wajib `<= biz.refund_approval.amount_idr` untuk persetujuan terkait; perpindahan dari tertunda ke dibayar harus menurunkan `Q` sebesar nilai pembayaran `x` yang sama secara atomik. `CHECK refund_cap` **tidak** mencegah `Rf` naik tanpa persetujuan. Contoh negatif yang harus ditolak: `F=1.000.000, C=0, R=250.000, P=900.000, Rf=150.001, Q=0` memberi `B=1`, `L=0`; karena `Q<=L`, CHECK baris tetap lolos meskipun nilai refund sudah melampaui hak Rp150.000. Jangan menyatakan ini tertutup sebelum uji integrasi terhadap FK approval, kunci dan ledger posting.
 
 - `ENT-04`: absolute literal *committed before expiry* not proven in R3 using deferred trigger; `SET CONSTRAINTS` can fire it early. Do not claim formal proof; design as special test gate and seek DBA assessment. No reinterpretation of PRD.
 - Managed PostgreSQL vendor support for pgaudit, logical WAL, extensions, PITR window, backup region, conn pooler: TBD.

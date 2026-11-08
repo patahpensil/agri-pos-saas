@@ -12,7 +12,7 @@
 
 ## Batasan wajib
 
-1. **Tidak ada tes GitHub Actions yang telah dijalankan pada akun pengguna**. Repository belum dibuat.
+1. **Repository privat `patahpensil/agri-pos-saas` sudah dibuat** dan PR #1 pondasi SAD sudah digabungkan oleh pemilik. Workflow `docs-integrity` dilaporkan PASS pada PR #1; itu uji **integritas dokumen**, bukan uji database/API/aplikasi. Proteksi branch `main` tidak tersedia pada GitHub Free repository privat; **semua merge hanya oleh Edgar setelah review manual**, tidak ada push langsung ke `main` oleh agen.
 2. **Tidak ada managed PostgreSQL, API end-to-end, Flutter device, PgBouncer cloud, atau managed PITR test dalam tahap pembuatan dokumen**.
 3. **Strict commitment-time FREE Trial** belum terbukti dengan trigger Postgres biasa, dan harus diberi status OPEN (bukan diklaim selesai).
 4. OTP dan billing provider, cloud vendor, budget, RPO/RTO, backup max, legal data processing masih TBD sesuai PRD §11.2.
