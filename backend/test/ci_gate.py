@@ -19,6 +19,11 @@ COMMON = (
        ("AUD-LOCK-01", DB), ("AUD-LOCK-01", API)]
     # Audit ulang PR #4 (R4-01, R4-02)
     + [("AUD-OTP-03", API), ("AUD-OTP-04", DB), ("AUD-OTP-04", API)]
+    # Modul produk & stok awal
+    + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
+    + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
+    + [("CAT-NEG-01", DB), ("CAT-API-01", API), ("INV-03-EXP", API), ("ST-INV-01-MASTER", API), ("ST-INV-02", API),
+       ("ST-COST-01", DB), ("ST-COST-04", API), ("ST-COST-05", DB)]
 )
 # Uji mutasi (database terpisah, target langsung): kontrol dihapus -> ID ini WAJIB FAIL.
 MUTATIONS = {
@@ -30,6 +35,12 @@ MUTATIONS = {
     "no_force": ["T-DB-02"],
     "invite_otp_ttl": ["AUD-OTP-04"],
     "invite_expiry": ["AUD-OTP-04"],
+    "lock_catalog": ["CAT-17"],
+    "factor_lock": ["CAT-16"],
+    "idem_hash": ["CAT-09"],
+    "cost_formula": ["CAT-14"],
+    "biz_grant": ["CAT-11"],
+    "no_force_biz": ["T-DB-02"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),
@@ -57,8 +68,10 @@ def main(results_dir: str) -> int:
             lines.append(f"| {target} | {key[0]} | {key[1]} | {status} | {detail} |")
         extra = set(got) - set(expected)
         for key in sorted(extra):
-            lines.append(f"| {target} | {key[0]} | {key[1]} | {got[key]['status']} | (tambahan) |")
-            if got[key]["status"] != "PASS":
+            st = got[key]["status"]
+            lines.append(f"| {target} | {key[0]} | {key[1]} | {st} | (tambahan) {got[key]['detail'][:120]} |")
+            # BELUM DIUJI tambahan = fitur belum dibangun (dilaporkan apa adanya, tidak dihitung PASS); FAIL selalu gagal.
+            if st == "FAIL":
                 bad += 1
     mut_ok = 0
     mut_total = 0

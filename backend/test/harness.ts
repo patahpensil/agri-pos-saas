@@ -57,6 +57,7 @@ export async function test(id: string, kind: string, title: string, fn: () => Pr
 }
 
 export function notRun(id: string, kind: string, title: string, why: string): void {
+  if (ONLY && !ONLY.has(id)) return;
   RESULTS.push({ id, kind, target: TARGET, title, status: "BELUM DIUJI", detail: why });
   console.log(`[BELUM DIUJI] ${id} [${TARGET}] ${title} :: ${why}`);
 }

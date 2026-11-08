@@ -21,6 +21,18 @@ const DB_CODES: Record<string, [number, string]> = {
   PHONE_NOT_AVAILABLE: [409, "Nomor HP tidak dapat dipakai"],
   VALIDATION: [400, "Data permintaan tidak sah"],
   PASSWORD_POLICY: [400, "Kata sandi tidak memenuhi kebijakan"],
+  // Katalog & stok awal
+  SKU_DUPLICATE: [409, "SKU sudah dipakai di toko ini"],
+  BARCODE_DUPLICATE: [409, "Barcode sudah dipakai di toko ini"],
+  IDEMPOTENCY_PAYLOAD_MISMATCH: [409, "Idempotency-Key sudah dipakai untuk isi permintaan yang berbeda"],
+  VERSION_CONFLICT: [409, "Data sudah diubah pihak lain; muat ulang lalu coba lagi"],
+  PACKAGE_FACTOR_LOCKED: [409, "Faktor isi kemasan yang sudah punya histori stok tidak bisa diubah; buat varian baru"],
+  PACKAGE_HAS_STOCK: [409, "Varian masih memiliki stok"],
+  IMMUTABLE_FIELD: [409, "Field ini tidak bisa diubah"],
+  LOCATION_INVALID: [400, "Lokasi tidak sah"],
+  BATCH_EXPIRED: [400, "Batch sudah kedaluwarsa dan tidak bisa dicatat sebagai stok siap jual"],
+  COST_BASIS_INVALID: [400, "Basis biaya stok awal tidak sah"],
+  OPENING_REQUIRED: [400, "Stok awal wajib diisi (boleh 0)"],
 };
 
 export function fromDbError(e: unknown): AppError | undefined {
