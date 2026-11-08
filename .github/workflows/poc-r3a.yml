@@ -21,7 +21,6 @@ jobs:
     timeout-minutes: 30
     env:
       PG_BIN: /usr/lib/postgresql/16/bin
-      POC_RUNTIME: ${{ runner.temp }}/poc_runtime
       POC_RESULTS: ${{ github.workspace }}/poc/r3a/results
       EXPECTED_TESTS: "67"
     defaults:
@@ -29,6 +28,9 @@ jobs:
         working-directory: poc/r3a
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Folder runtime khusus job (konteks runner tidak tersedia di env tingkat job)
+        run: echo "POC_RUNTIME=$RUNNER_TEMP/poc_runtime" >> "$GITHUB_ENV"
 
       - name: Pasang PostgreSQL 16 dan PgBouncer (layanan bawaan dimatikan)
         run: |
