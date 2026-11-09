@@ -22,6 +22,9 @@ COMMON = (
     # Issue #5: retry OTP bertahap & keamanan login
     + [("OTP-RETRY-01", "integrasi DB/pengirim OTP"), ("OTP-RETRY-02", "integrasi DB/pengirim OTP"),
        ("LOGIN-WINDOW-01", DB), ("LOGIN-VICTIM-01", DB), ("LOGIN-ENUM-01", DB)]
+    # FEFO (INV-04): saran, bukan reservasi.
+    + [("FEFO-01", API), ("FEFO-02", API), ("FEFO-03", API),
+       ("FEFO-04", API), ("FEFO-05", API), ("FEFO-06", DB)]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
@@ -75,6 +78,7 @@ MUTATIONS = {
     "hold_origin": ["INV-HOLD-ORIGIN", "INV-HOLD-ORIGIN-03"],
     "hold_attribution": ["INV-HOLD-ORIGIN-02"],
     "otp_backoff": ["OTP-RETRY-01"],
+    "fefo_guard": ["FEFO-02"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),
