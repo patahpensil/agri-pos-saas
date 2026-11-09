@@ -376,16 +376,10 @@ export async function inventoryTests(): Promise<void> {
 
     await test("INV-HOLD-02", KA, "Pelepasan tidak membuka stok yang kedaluwarsa atau masih dicakup penahanan lain (dilaporkan, tidak dibuang diam-diam)", async () => {
       const p = await pesticide(A.token);
-      const r = await receive(A.token, { productId: p.id, lines: [
-        line(p.pkg.botol, 10, { batch: { number: "B-X", expiresOn: "2032-01-01" } }),
-        line(p.pkg.botol, 2, { status: "QUARANTINE", batch: { number: "B-OLD", expiresOn: "2020-01-01" } })] });
+      const r = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 10, { batch: { number: "B-X", expiresOn: "2032-01-01" } })] });
       eq(r.status, 201, r.text);
-      const b1 = await batchId(p.id, "B-01");
-      const bx = await batchId(p.id, "B-X");
-      const bo = await batchId(p.id, "B-OLD");
-      // Barang kedaluwarsa dipindah Owner ke HELD (bukan siap jual) agar tercakup pelepasan.
-      const mv = await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: bo, from: "QUARANTINE", to: "HELD", qty: 2, reason: "tahan untuk retur" });
-      eq(mv.status, 201, mv.text);
+      const b1 = await batchId(p.id, "B-01");   // kedaluwarsa 2030-12-31
+      const bx = await batchId(p.id, "B-X");    // kedaluwarsa 2032-01-01
       const hb = await hold(A.token, { productId: p.id, batchId: b1, reason: "batch dicurigai" });
       const hp = await hold(ADM.token, { productId: p.id, reason: "penarikan produk" });
       ok(hb.status === 201 && hp.status === 201, `${hb.text} ${hp.text}`);
@@ -397,20 +391,57 @@ export async function inventoryTests(): Promise<void> {
       ok(Number(relB.body.releasedQtyBase) === 0 && nr.length > 0 && nr.every((x) => x.reason === "OTHER_HOLD_ACTIVE"), `lepas batch: ${relB.text}`);
       let rs = await rows(A.token, p.id);
       eq(baseOf(rs, "SALEABLE"), 0, "masih tertahan oleh penahanan produk");
-      const relP = await ownerRelease(A.token, hp.body.holdId as string, "penarikan dibatalkan");
+      // Simulasi waktu berjalan: "hari ini" toko = 2031-06-01 (B-01 sudah kedaluwarsa, B-X belum), lalu dipulihkan.
+      const [def] = await admin<{ d: string }>("select pg_get_functiondef('app.tenant_today(uuid)'::regprocedure) d");
+      let relP: Res;
+      await admin("create or replace function app.tenant_today(p_tenant uuid) returns date language sql stable set search_path = pg_catalog, pg_temp as $$ select date '2031-06-01' $$");
+      try {
+        relP = await ownerRelease(A.token, hp.body.holdId as string, "penarikan dibatalkan");
+      } finally {
+        await admin(def.d);
+      }
       eq(relP.status, 200, relP.text);
       rs = await rows(A.token, p.id);
       const nr2 = relP.body.notReleased as { reason: string; batchId: string }[];
-      ok(baseOf(rs.filter((x) => x.batchId === bx), "SALEABLE") === 10 && baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE") === 41,
-         `B-X & B-01 kembali: ${JSON.stringify(rs)}`);
-      ok(baseOf(rs.filter((x) => x.batchId === bo), "SALEABLE") === 0 && nr2.some((x) => x.reason === "BATCH_EXPIRED" && x.batchId === bo), `B-OLD kedaluwarsa tetap ditahan: ${relP.text}`);
-      eq(baseOf(rs.filter((x) => x.batchId === bo), "HELD"), 2, "B-OLD tetap HELD");
-      // Setelah semua penahanan dilepas, stok tidak kedaluwarsa tidak boleh tertinggal di HELD ("yatim").
+      ok(baseOf(rs.filter((x) => x.batchId === bx), "SALEABLE") === 10, `B-X kembali: ${JSON.stringify(rs)}`);
+      ok(baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE") === 0 && nr2.some((x) => x.reason === "BATCH_EXPIRED" && x.batchId === b1), `B-01 kedaluwarsa tetap ditahan: ${relP.text}`);
+      eq(baseOf(rs.filter((x) => x.batchId === b1), "HELD"), 41, "B-01 tetap HELD");
+      // Setelah semua penahanan dilepas, stok yang belum kedaluwarsa (per tanggal simulasi) tidak boleh tertinggal di HELD.
       const [orphan] = await admin<{ n: number }>(
         `select coalesce(sum(b.qty),0)::int n from biz.stock_balance b join biz.batch bt on bt.id=b.batch_id
-          where b.product_id=$1 and b.status='HELD' and (bt.expires_on is null or bt.expires_on >= current_date)`, [p.id]);
+          where b.product_id=$1 and b.status='HELD' and (bt.expires_on is null or bt.expires_on >= date '2031-06-01')`, [p.id]);
       eq(orphan.n, 0, "stok layak yang tertinggal ditahan");
-      return "lepas batch saat tahan produk aktif -> 0 dilepas (OTHER_HOLD_ACTIVE); lepas produk -> B-01 41 & B-X 10 kembali, B-OLD kedaluwarsa tetap HELD (BATCH_EXPIRED); 0 stok layak tertinggal";
+      return "lepas batch saat tahan produk aktif -> 0 dilepas (OTHER_HOLD_ACTIVE); lepas produk (hari ini disimulasikan 2031-06-01) -> B-X 10 kembali, B-01 kedaluwarsa tetap HELD (BATCH_EXPIRED); 0 stok layak tertinggal";
+    });
+
+    await test("INV-HOLD-ORIGIN", KA, "Stok karantina/pemeriksaan tidak bisa dipindah ke DITAHAN lalu dilepas ke siap jual tanpa reautentikasi terikat isi", async () => {
+      const p = await pesticide(A.token);
+      const b = await batchId(p.id, "B-01");
+      const base = { productId: p.id, packageId: p.pkg.botol, batchId: b, reason: "uji asal tahan" };
+      const prep = [
+        await move(A.token, { ...base, from: "SALEABLE", to: "QUARANTINE", qty: 3 }),
+        await move(A.token, { ...base, from: "SALEABLE", to: "INSPECTION", qty: 2 }),
+      ];
+      ok(prep.every((r) => r.status === 201), prep.map((r) => r.text).join(" | "));
+      const s0 = await pools(p.id);
+      const led0 = await ledgerCount(p.id);
+      const q = await move(A.token, { ...base, from: "QUARANTINE", to: "HELD", qty: 3 });
+      const i = await move(A.token, { ...base, from: "INSPECTION", to: "HELD", qty: 2 });
+      const qDb = await errOf(asActor(A.token, "select app.stock_move($1, $2::jsonb)", [randomUUID(), JSON.stringify({ ...base, from: "QUARANTINE", to: "HELD", qty: 1 })]));
+      ok([q, i].every((r) => r.status === 409 && r.body.code === "STATUS_MOVE_NOT_ALLOWED") && qDb === "STATUS_MOVE_NOT_ALLOWED",
+         `${q.status}:${String(q.body.code)} ${i.status}:${String(i.body.code)} DB:${qDb}`);
+      eq(await ledgerCount(p.id), led0, "ledger tidak bertambah");
+      // Jalan memutar lewat penahanan: tahan produk lalu lepas -> karantina & pemeriksaan TIDAK ikut ke siap jual.
+      const h = await hold(ADM.token, { productId: p.id, reason: "coba memutar" });
+      eq(h.status, 201, h.text);
+      const rel = await ownerRelease(A.token, h.body.holdId as string, "lepas");
+      eq(rel.status, 200, rel.text);
+      const s1 = await pools(p.id);
+      ok(s1.QUARANTINE.q === 3 && s1.INSPECTION.q === 2 && s1.QUARANTINE.v === s0.QUARANTINE.v && s1.INSPECTION.v === s0.INSPECTION.v
+         && s1.SALEABLE.q === 36 && sumPools(s1).q === 41 && sumPools(s1).v === 4_100_000, `${JSON.stringify(s0)} -> ${JSON.stringify(s1)}`);
+      const ok2 = await move(A.token, { ...base, packageId: p.pkg.karton, from: "SALEABLE", to: "HELD", qty: 1 });
+      eq(ok2.status, 201, `SALEABLE -> HELD tetap boleh: ${ok2.text}`);
+      return "QUARANTINE->HELD & INSPECTION->HELD -> 409 (API & DB), ledger tetap; tahan+lepas tidak membuka karantina 3/pemeriksaan 2; total 41/Rp4.100.000; SALEABLE->HELD tetap 201";
     });
 
     await test("INV-HOLD-03", KD, "Tahan vs penerimaan siap jual serentak (10 putaran): saat penahanan aktif, stok siap jual dalam cakupan selalu 0", async () => {

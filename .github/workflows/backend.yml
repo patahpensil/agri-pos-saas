@@ -164,6 +164,7 @@ jobs:
           bash db/test/mutation.sh BATCH_IDENTITY INV-AUD-03-API,INV-AUD-03-DB || rc=1
           bash db/test/mutation.sh MOVE_REAUTH INV-AUD-04-A,INV-AUD-04-B,INV-AUD-04-C,INV-AUD-04-D,INV-AUD-04-E,INV-AUD-04-F,INV-AUD-04-O || rc=1
           bash db/test/mutation.sh MOVE_TRANSITION INV-AUD-04-K || rc=1
+          bash db/test/mutation.sh HOLD_ORIGIN INV-HOLD-ORIGIN || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

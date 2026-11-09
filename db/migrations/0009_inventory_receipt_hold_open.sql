@@ -678,8 +678,11 @@ end $$;
 -- ------------------------------------------------------------------ POST /inventory/status-moves (Owner)
 -- Pindah status fisik. Nilai ikut pindah. Matriks perpindahan (INV-AUD-04, fail-closed):
 --   SALEABLE   -> INSPECTION | HELD | QUARANTINE | DAMAGED      (makin ketat; Owner)
---   INSPECTION -> QUARANTINE | HELD | DAMAGED; -> SALEABLE hanya dengan reautentikasi Owner terikat isi
---   QUARANTINE -> HELD | DAMAGED;              -> SALEABLE hanya dengan reautentikasi Owner terikat isi ("lepas karantina")
+--   INSPECTION -> QUARANTINE | DAMAGED;        -> SALEABLE hanya dengan reautentikasi Owner terikat isi
+--   QUARANTINE -> DAMAGED;                     -> SALEABLE hanya dengan reautentikasi Owner terikat isi ("lepas karantina")
+--   Asal HELD dibatasi: stok hanya masuk HELD dari SALEABLE (atau penerimaan langsung), karena pelepasan
+--   penahanan mengembalikan HELD ke SALEABLE. Tanpa batas ini, QUARANTINE/INSPECTION -> HELD -> lepas akan
+--   memutari reautentikasi terikat isi di atas.
 --   HELD       -> DAMAGED; ke SALEABLE WAJIB lewat pelepasan penahanan (stock_release)
 --   DAMAGED    -> (tidak ada; prosedur pemusnahan/retur pemasok belum disahkan)
 -- Perpindahan lain ditolak STATUS_MOVE_NOT_ALLOWED agar tidak ada jalan memutar (mis. DAMAGED -> QUARANTINE -> SALEABLE).
@@ -741,6 +744,8 @@ begin
     end if;                                                                                   -- @kontrol:MOVE_TRANSITION
     -- AUTH-04: bukti reautentikasi baru, sekali pakai, terikat tenant/pengguna/sesi/aksi/batch/isi perpindahan.
     v_grant := iam.reauth_consume_scope(p_body->>'reauthToken', 'inventory.move', bt.id, p_body);  -- @kontrol:MOVE_REAUTH
+  elsif v_to = 'HELD' and v_from <> 'SALEABLE' then                                         -- @kontrol:HOLD_ORIGIN
+    raise exception 'STATUS_MOVE_NOT_ALLOWED' using errcode = 'P0001';                        -- @kontrol:HOLD_ORIGIN
   elsif v_from = 'DAMAGED' or (v_from = 'HELD' and v_to <> 'DAMAGED')
         or (v_from = 'QUARANTINE' and v_to not in ('HELD', 'DAMAGED'))
         or (v_from = 'INSPECTION' and v_to not in ('QUARANTINE', 'HELD', 'DAMAGED')) then
