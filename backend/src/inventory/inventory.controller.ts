@@ -60,6 +60,15 @@ export class InventoryController {
     return this.call(req.sessionToken!, "select app.stock_release($1, $2, $3::jsonb) as r", [idemKey(key), id.toLowerCase(), JSON.stringify(b)]);
   }
 
+  @Get("inventory/fefo")
+  async fefo(@Req() req: AuthedRequest, @Query() query: unknown) {
+    const q = parseBody(schemas.fefoQuery, query);
+    const r = await db(this.dbs.withActor(req.sessionToken!, (c) =>
+      c.query<{ r: unknown }>("select app.inventory_fefo($1, $2, $3, $4) as r",
+        [q.productId, q.packageId ?? null, q.locationId ?? null, q.limit ?? 20])));
+    return r.rows[0].r;
+  }
+
   @Get("inventory/holds")
   async holds(@Req() req: AuthedRequest, @Query() query: unknown) {
     const q = parseBody(schemas.holdsQuery, query);
