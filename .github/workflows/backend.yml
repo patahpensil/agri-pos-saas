@@ -108,7 +108,7 @@ jobs:
         working-directory: backend
         env:
           TEST_TARGET: pgbouncer
-          TEST_SUITES: db,aud,catalog,inv,pooler,api
+          TEST_SUITES: db,aud,catalog,inv,fefo,pooler,api
           TEST_DB_NAME: ${{ env.DB }}
           TEST_RUNTIME_HOST: 127.0.0.1
           TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
