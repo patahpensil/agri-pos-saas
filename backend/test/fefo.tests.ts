@@ -124,6 +124,58 @@ export async function fefoTests(): Promise<void> {
       return "expiry tidak diketahui ditempatkan terakhir; karantina dan expired tidak masuk";
     });
 
+
+    // Stok yang kemarin masih layak dapat kedaluwarsa hari ini tanpa transaksi baru.
+    // Untuk uji saja, superuser mengubah proyeksi sementara agar keadaan ini dapat
+    // disimulasikan tanpa menunggu kalender berganti. Perubahan selalu dibalik.
+    // Ini bukan jalur tulis API/operasional, dan tidak dipakai sebagai bukti posting stok.
+    await test("FEFO-07", apiKind, "Batch kedaluwarsa yang masih berstatus SALEABLE wajib dikeluarkan dari saran", async () => {
+      const expiredNumber = "FEFO-EXP-" + uuid().slice(0, 8);
+      const [received] = await asActor<{ r: Json }>(A.token,
+        "select app.inventory_receive($1,$2::jsonb) as r",
+        [uuid(), JSON.stringify({
+          productId, supplierName: "Pemasok Uji FEFO",
+          lines: [{
+            packageId: pkg, qty: 1, status: "QUARANTINE",
+            batch: { number: expiredNumber, expiresOn: future(-3) },
+            cost: { basis: "KNOWN", totalIdr: 100 },
+          }],
+        })]);
+      ok(Boolean(received.r), "gagal menyiapkan barang kedaluwarsa di karantina");
+      const [fixture] = await admin<{ batch_id: string; location_id: string; qty: number }>(
+        `select b.batch_id, b.location_id, b.qty from biz.stock_balance b
+          join biz.batch bt on bt.tenant_id=b.tenant_id and bt.id=b.batch_id
+         where b.tenant_id=$1 and b.product_id=$2 and b.package_version_id=$3
+           and b.status='QUARANTINE' and bt.batch_number=$4`,
+        [A.tenant, productId, pkg, expiredNumber]);
+      ok(fixture?.qty === 1, "baris stok kedaluwarsa tidak ditemukan");
+
+      const [moved] = await admin<{ qty: number }>(
+        `update biz.stock_balance set status='SALEABLE'
+         where tenant_id=$1 and location_id=$2 and product_id=$3
+           and package_version_id=$4 and batch_id=$5 and status='QUARANTINE'
+         returning qty`,
+        [A.tenant, fixture.location_id, productId, pkg, fixture.batch_id]);
+      ok(moved?.qty === 1, "gagal mensimulasikan stok yang lewat tanggal kedaluwarsa");
+      try {
+        const response = await http(path, A.token);
+        eq(response.status, 200, response.text);
+        const suggestions = response.body.suggestions as Json[];
+        ok(Array.isArray(suggestions), "respons saran batch tidak sah");
+        ok(!suggestions.some((s) => s.batchNumber === expiredNumber),
+          "PELANGGARAN FEFO: batch kedaluwarsa masih SALEABLE masuk rekomendasi");
+        return "batch sudah expired dengan status SALEABLE ditolak; filter expiry dijaga uji";
+      } finally {
+        const [restored] = await admin<{ qty: number }>(
+          `update biz.stock_balance set status='QUARANTINE'
+           where tenant_id=$1 and location_id=$2 and product_id=$3
+             and package_version_id=$4 and batch_id=$5 and status='SALEABLE'
+           returning qty`,
+          [A.tenant, fixture.location_id, productId, pkg, fixture.batch_id]);
+        ok(restored?.qty === 1, "gagal mengembalikan fixture stok uji");
+      }
+    });
+
     await test("FEFO-06", dbKind, "Pemanggilan FEFO SQL tidak mengubah saldo maupun ledger", async () => {
       const [before] = await admin<{ n: number }>(
         "select count(*)::int n from biz.inventory_ledger where tenant_id=$1 and product_id=$2", [A.tenant, productId]);
