@@ -25,6 +25,9 @@ COMMON = (
     # FEFO (INV-04): saran, bukan reservasi.
     + [("FEFO-01", API), ("FEFO-02", API), ("FEFO-03", API),
        ("FEFO-04", API), ("FEFO-05", API), ("FEFO-06", DB), ("FEFO-07", API)]
+    # INV-07 — opname PRO: captured count, owner-only approval, delta after countedAt.
+    + [(f"COUNT-0{i}", API if i != 7 else DB) for i in range(1,9)]
+    + [("ST-INV-09-INV", API)]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
@@ -80,6 +83,7 @@ MUTATIONS = {
     "otp_backoff": ["OTP-RETRY-01"],
     "fefo_guard": ["FEFO-02"],
     "fefo_expiry": ["FEFO-07"],
+    "count_owner_approval": ["COUNT-03"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),
