@@ -43,7 +43,7 @@ begin
        and b.status = 'SALEABLE' -- @kontrol:FEFO_GUARD
        and (p_location is null or b.location_id = p_location)
        and (p_package is null or b.package_version_id = p_package)
-       and (bt.expires_on is null or bt.expires_on >= v_today)
+       and (bt.expires_on is null or bt.expires_on >= v_today) -- @kontrol:FEFO_EXPIRY
        and not app.hold_active(a.tenant_id, b.location_id, b.product_id, b.batch_id)
      order by bt.expires_on asc nulls last, bt.batch_number asc nulls last,
               b.batch_id, b.package_version_id, b.location_id
