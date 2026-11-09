@@ -339,7 +339,7 @@ begin
    raise exception 'SUBSIDY_RECEIPT_SEPARATE' using errcode='P0001'; end if;
  -- Token terikat id dan versi proposal; perubahan proposal atau token operasi lain tidak berlaku.
  v_token:=p_body->>'reauthToken';
- v_rid:=iam.reauth_consume_scope(v_token,'inventory.count.approve',p_count,
+ v_rid:=iam.reauth_consume_scope(v_token,'inventory.count.approve',p_count, -- @kontrol:COUNT_OWNER_APPROVAL
                                  jsonb_build_object('expectedVersion',v_v)); -- @kontrol:COUNT_OWNER_APPROVAL
  v_event:=app.inv_event(a.tenant_id,'COUNT_ADJUST',c.product_id,c.location_id,a.user_id,v_now,
                         p_key,'STOCK_COUNT');
