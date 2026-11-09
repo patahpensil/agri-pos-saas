@@ -20,7 +20,7 @@ const TABLES = [
   "biz.product", "biz.package_version", "biz.barcode", "biz.batch", "biz.inventory_event", "biz.inventory_ledger",
   "biz.stock_balance", "biz.cost_pool", "biz.value_ledger", "biz.idempotency", "biz.audit_event", "biz.inventory_alert",
   // Modul inventori (0009)
-  "biz.stock_receipt", "biz.stock_hold", "iam.reauth_grant",
+  "biz.stock_receipt", "biz.stock_hold", "biz.stock_hold_line", "iam.reauth_grant",
 ];
 
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.

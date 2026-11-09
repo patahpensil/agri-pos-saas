@@ -30,7 +30,8 @@ COMMON = (
     + [(i, API) for i in ("INV-REC-01", "ST-INV-05", "INV-REC-02", "INV-REC-03", "INV-REC-04", "ST-INV-02", "ST-INV-03",
                           "ST-INV-08", "ST-INV-12", "ST-INV-07-INV", "INV-HOLD-02", "ST-COST-06", "ST-COST-03", "INV-MOVE-01",
                           "INV-TENANT-01", "INV-LOCK-01", "INV-RECON-01", "INV-SUB-01",
-                          "INV-AUD-01-API", "INV-AUD-02-API", "INV-AUD-03-API", "INV-HOLD-ORIGIN")]
+                          "INV-AUD-01-API", "INV-AUD-02-API", "INV-AUD-03-API", "INV-HOLD-ORIGIN",
+                          "INV-HOLD-ORIGIN-02", "INV-HOLD-ORIGIN-03", "INV-HOLD-ORIGIN-04")]
     + [(f"INV-AUD-04-{c}", API) for c in "ABCDEFGHIJKMN"] + [(f"INV-AUD-04-{c}", DB) for c in "LO"]
     + [(i, DB) for i in ("INV-OPEN-01", "INV-HOLD-03", "INV-ATOM-01", "INV-APPEND-01", "INV-PRIV-01",
                           "INV-AUD-01-DB", "INV-AUD-02-DB", "INV-AUD-03-DB")]
@@ -68,7 +69,8 @@ MUTATIONS = {
     "batch_identity": ["INV-AUD-03-API", "INV-AUD-03-DB"],
     "move_reauth": [f"INV-AUD-04-{c}" for c in "ABCDEFO"],
     "move_transition": ["INV-AUD-04-K"],
-    "hold_origin": ["INV-HOLD-ORIGIN"],
+    "hold_origin": ["INV-HOLD-ORIGIN", "INV-HOLD-ORIGIN-03"],
+    "hold_attribution": ["INV-HOLD-ORIGIN-02"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),

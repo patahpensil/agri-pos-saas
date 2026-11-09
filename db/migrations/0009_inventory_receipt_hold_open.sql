@@ -20,6 +20,10 @@
 --  * INV-AUD-03: nomor batch per produk hanya punya SATU tanggal kedaluwarsa; expiry batch tidak bisa diubah.
 --  * INV-AUD-04: pindah status ke SALEABLE (dari INSPECTION/QUARANTINE saja) wajib reautentikasi Owner yang
 --    terikat pada isi perpindahan; HELD hanya lewat pelepasan; DAMAGED tidak bisa dikeluarkan lewat stock_move.
+--  * Asal stok HELD: setiap unit HELD tercatat pada penahanan asalnya (biz.stock_hold_line). Pelepasan hanya
+--    mengembalikan unit milik penahanan itu. HELD hanya bisa terbentuk lewat penahanan (stock_hold, atau pindah
+--    SALEABLE->HELD yang otomatis membuat penahanan parsial); penerimaan & buka karton ke/di HELD ditolak.
+--    HELD tanpa asal (mis. data lama) TIDAK pernah dilepas (fail-closed) dan dilaporkan NO_HOLD_ORIGIN.
 --
 -- Penanda uji mutasi: "-- @kontrol:NAMA" (dihapus saat mutasi), "-- @mutasi:NAMA " (diaktifkan).
 
@@ -69,6 +73,8 @@ create table biz.stock_hold (
   location_id      uuid not null,
   product_id       uuid not null,
   batch_id         uuid,
+  -- partial = penahanan sejumlah unit tertentu (dari pindah SALEABLE->HELD); tidak memblokir cakupan batch/produk.
+  partial          boolean not null default false,
   reason           text not null check (char_length(reason) between 1 and 200),
   held_by          uuid not null references iam.user_account (id),
   held_at          timestamptz not null,
@@ -83,11 +89,29 @@ create table biz.stock_hold (
     references biz.inventory_event (tenant_id, id, product_id, location_id),
   foreign key (tenant_id, release_event_id, product_id, location_id)
     references biz.inventory_event (tenant_id, id, product_id, location_id),
+  check (not partial or batch_id is not null),
   check ((released_at is null) = (released_by is null)
          and (released_at is null) = (release_reason is null)
          and (released_at is null) = (release_event_id is null))
 );
 create index stock_hold_active on biz.stock_hold (tenant_id, product_id) where released_at is null;
+
+-- Asal stok HELD: berapa unit pada (kemasan, batch) yang ditahan OLEH penahanan tertentu. Proyeksi yang dijaga
+-- fungsi app.* di transaksi yang sama dengan ledger; invarian: jumlah baris penahanan aktif per dimensi <= saldo HELD.
+create table biz.stock_hold_line (
+  tenant_id          uuid not null,
+  hold_id            uuid not null,
+  location_id        uuid not null,
+  product_id         uuid not null,
+  package_version_id uuid not null,
+  batch_id           uuid not null,
+  qty                integer not null check (qty >= 0),
+  primary key (tenant_id, hold_id, package_version_id, batch_id),
+  foreign key (tenant_id, hold_id) references biz.stock_hold (tenant_id, id),
+  foreign key (tenant_id, product_id, package_version_id) references biz.package_version (tenant_id, product_id, id),
+  foreign key (tenant_id, product_id, batch_id) references biz.batch (tenant_id, product_id, id)
+);
+create index stock_hold_line_dim on biz.stock_hold_line (tenant_id, product_id, package_version_id, batch_id);
 
 -- (INV-AUD-02) INV-01: setiap penerimaan dicatat beserta pemasoknya; kosong/spasi saja ditolak database.
 alter table biz.stock_receipt add constraint stock_receipt_supplier_required check (supplier_name is not null and pg_catalog.btrim(supplier_name) <> '');  -- @kontrol:SUPPLIER_REQUIRED
@@ -104,9 +128,9 @@ begin
     raise exception 'APPEND_ONLY' using errcode = 'P0001';
   end if;
   if old.released_at is not null or new.released_at is null
-     or (new.tenant_id, new.id, new.location_id, new.product_id, new.batch_id, new.reason, new.held_by, new.held_at, new.hold_event_id)
+     or (new.tenant_id, new.id, new.location_id, new.product_id, new.batch_id, new.partial, new.reason, new.held_by, new.held_at, new.hold_event_id)
         is distinct from
-        (old.tenant_id, old.id, old.location_id, old.product_id, old.batch_id, old.reason, old.held_by, old.held_at, old.hold_event_id) then
+        (old.tenant_id, old.id, old.location_id, old.product_id, old.batch_id, old.partial, old.reason, old.held_by, old.held_at, old.hold_event_id) then
     raise exception 'APPEND_ONLY' using errcode = 'P0001';
   end if;
   return new;
@@ -196,6 +220,8 @@ create trigger reauth_grant_guard before update or delete on iam.reauth_grant fo
 create trigger reauth_grant_no_truncate before truncate on iam.reauth_grant for each statement execute function iam.reject_change();
 create trigger inventory_ledger_subsidy_guard before insert on biz.inventory_ledger for each row execute function biz.ledger_subsidy_guard();  -- @kontrol:SUBSIDY_SPLIT
 create trigger stock_hold_no_truncate before truncate on biz.stock_hold for each statement execute function iam.reject_change();
+create trigger stock_hold_line_no_delete before delete on biz.stock_hold_line for each row execute function iam.reject_change();
+create trigger stock_hold_line_no_truncate before truncate on biz.stock_hold_line for each statement execute function iam.reject_change();
 reset role;
 
 grant select, insert on biz.stock_receipt to app_fn_owner;
@@ -323,11 +349,11 @@ revoke execute on function iam.reauth_issue(text, text, uuid, jsonb), iam.reauth
   iam.reauth_consume_scope(text, text, uuid, jsonb), iam.reauth_scope_hash(text, jsonb) from public;
 grant execute on function iam.reauth_issue(text, text, uuid, jsonb), iam.reauth_consume(text, text, uuid),
   iam.reauth_consume_scope(text, text, uuid, jsonb) to app_fn_owner;
-grant select, insert, update on biz.stock_hold to app_fn_owner;
+grant select, insert, update on biz.stock_hold, biz.stock_hold_line to app_fn_owner;
 do $$
 declare t text;
 begin
-  foreach t in array array['biz.stock_receipt', 'biz.stock_hold'] loop
+  foreach t in array array['biz.stock_receipt', 'biz.stock_hold', 'biz.stock_hold_line'] loop
     execute format('alter table %s enable row level security', t);
     execute format('alter table %s force row level security', t);
     execute format('create policy app_tenant on %s for all to app_fn_owner using (tenant_id = app.current_tenant()) with check (tenant_id = app.current_tenant())', t);
@@ -411,8 +437,41 @@ create function app.hold_active(p_tenant uuid, p_loc uuid, p_product uuid, p_bat
 language sql stable set search_path = pg_catalog, pg_temp as $$
   select exists (select 1 from biz.stock_hold h
                   where h.tenant_id = p_tenant and h.location_id = p_loc and h.product_id = p_product
-                    and h.released_at is null and (h.batch_id is null or h.batch_id = p_batch))
+                    and h.released_at is null and not h.partial and (h.batch_id is null or h.batch_id = p_batch))
 $$;
+
+-- Catat unit HELD milik penahanan (asal HELD).
+create function app.hold_line_add(p_tenant uuid, p_hold uuid, p_loc uuid, p_product uuid, p_pkg uuid, p_batch uuid, p_qty integer)
+returns void language sql volatile set search_path = pg_catalog, pg_temp as $$
+  insert into biz.stock_hold_line (tenant_id, hold_id, location_id, product_id, package_version_id, batch_id, qty)
+  values (p_tenant, p_hold, p_loc, p_product, p_pkg, p_batch, p_qty)
+  on conflict (tenant_id, hold_id, package_version_id, batch_id) do update set qty = biz.stock_hold_line.qty + excluded.qty
+$$;
+
+-- HELD berkurang di luar pelepasan (pindah HELD->DAMAGED): habiskan dulu unit tanpa asal, lalu kurangi baris
+-- penahanan aktif (urut waktu tahan) agar invarian "baris penahanan <= saldo HELD" tetap benar.
+create function app.hold_lines_reduce(p_tenant uuid, p_loc uuid, p_product uuid, p_pkg uuid, p_batch uuid, p_qty integer)
+returns void language plpgsql volatile set search_path = pg_catalog, pg_temp as $$
+declare v_bal integer; v_attr bigint; v_need integer; r record; v_take integer;
+begin
+  select coalesce(sum(b.qty), 0) into v_bal from biz.stock_balance b
+   where b.tenant_id = p_tenant and b.location_id = p_loc and b.product_id = p_product
+     and b.package_version_id = p_pkg and b.batch_id = p_batch and b.status = 'HELD';
+  select coalesce(sum(l.qty), 0) into v_attr from biz.stock_hold_line l join biz.stock_hold h on h.tenant_id = l.tenant_id and h.id = l.hold_id
+   where l.tenant_id = p_tenant and l.location_id = p_loc and l.product_id = p_product and l.package_version_id = p_pkg
+     and l.batch_id = p_batch and h.released_at is null;
+  v_need := p_qty - least(p_qty, greatest(v_bal - v_attr, 0)::integer);
+  for r in select l.hold_id, l.qty from biz.stock_hold_line l join biz.stock_hold h on h.tenant_id = l.tenant_id and h.id = l.hold_id
+            where l.tenant_id = p_tenant and l.location_id = p_loc and l.product_id = p_product and l.package_version_id = p_pkg
+              and l.batch_id = p_batch and h.released_at is null and l.qty > 0
+            order by h.held_at, h.id for update of l loop
+    exit when v_need <= 0;
+    v_take := least(r.qty, v_need);
+    update biz.stock_hold_line l set qty = l.qty - v_take
+     where l.tenant_id = p_tenant and l.hold_id = r.hold_id and l.package_version_id = p_pkg and l.batch_id = p_batch;
+    v_need := v_need - v_take;
+  end loop;
+end $$;
 
 -- Posting satu baris ledger kuantitas + saldo. Pengurangan tidak boleh membuat stok negatif (INV-08).
 create function app.stock_post(p_tenant uuid, p_event uuid, p_movement text, p_loc uuid, p_product uuid, p_pkg uuid,
@@ -572,6 +631,10 @@ begin
      where b.tenant_id = a.tenant_id and b.product_id = v_pid
        and b.batch_number is not distinct from v_bnum and b.expires_on is not distinct from v_exp;
 
+    -- Asal HELD: stok hanya masuk HELD lewat penahanan. Barang mencurigakan diterima ke QUARANTINE/INSPECTION.
+    if v_status = 'HELD' then                                                                   -- @kontrol:HOLD_ORIGIN
+      raise exception 'HELD_VIA_HOLD_ONLY' using errcode = 'P0001';                             -- @kontrol:HOLD_ORIGIN
+    end if;                                                                                     -- @kontrol:HOLD_ORIGIN
     -- INV-06: selama penahanan aktif, stok baru tidak boleh masuk siap jual pada cakupan itu.
     if v_status = 'SALEABLE' and app.hold_active(a.tenant_id, v_loc, v_pid, v_batch) then      -- @kontrol:HOLD_BLOCK
       raise exception 'HOLD_ACTIVE' using errcode = 'P0001';                                      -- @kontrol:HOLD_BLOCK
@@ -663,6 +726,10 @@ begin
      or v_status not in ('SALEABLE', 'INSPECTION', 'HELD', 'DAMAGED', 'QUARANTINE') then
     raise exception 'VALIDATION' using errcode = 'P0001';
   end if;
+  -- Asal HELD: unit HELD terikat ke penahanan per kemasan; karton DITAHAN tidak dibuka sebelum dilepas.
+  if v_status = 'HELD' then                                                                   -- @kontrol:HOLD_ORIGIN
+    raise exception 'HELD_VIA_HOLD_ONLY' using errcode = 'P0001';                             -- @kontrol:HOLD_ORIGIN
+  end if;                                                                                     -- @kontrol:HOLD_ORIGIN
 
   v_event := app.inv_event(a.tenant_id, 'OPEN_PACKAGE', src.product_id, v_loc, a.user_id, v_now, p_key, null);
   perform app.stock_post(a.tenant_id, v_event, 'OPEN_PACKAGE', v_loc, src.product_id, src.id, v_batch, v_status, -v_qty, src.factor, a.user_id, v_now);
@@ -691,7 +758,7 @@ language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 declare
   a record; v_prev jsonb; v_pid uuid; v_loc uuid; pk record; bt record; v_from text; v_to text; v_qty integer;
   v_event uuid; v_now timestamptz := pg_catalog.clock_timestamp(); v_val bigint; v_resp jsonb; v_reason text;
-  v_grant uuid; v_ref text;
+  v_grant uuid; v_ref text; v_hold uuid;
 begin
   select * into a from iam.current_actor();
   perform app.inv_require_active(a.effective_status);
@@ -753,16 +820,25 @@ begin
   end if;
 
   v_event := app.inv_event(a.tenant_id, 'STATUS_MOVE', v_pid, v_loc, a.user_id, v_now, p_key, v_reason);
+  if v_from = 'HELD' then
+    perform app.hold_lines_reduce(a.tenant_id, v_loc, v_pid, pk.id, bt.id, v_qty);
+  end if;
   perform app.stock_post(a.tenant_id, v_event, 'STATUS_MOVE', v_loc, v_pid, pk.id, bt.id, v_from, -v_qty, pk.factor, a.user_id, v_now);
   perform app.stock_post(a.tenant_id, v_event, 'STATUS_MOVE', v_loc, v_pid, pk.id, bt.id, v_to, v_qty, pk.factor, a.user_id, v_now);
   v_val := app.pool_move(a.tenant_id, v_event, v_loc, v_pid, v_from, v_to, v_qty::bigint * pk.factor, a.user_id, v_now);
+  -- SALEABLE -> HELD = penahanan parsial: unit ini punya asal & alasan, dan hanya kembali lewat pelepasannya.
+  if v_to = 'HELD' then
+    insert into biz.stock_hold (tenant_id, location_id, product_id, batch_id, partial, reason, held_by, held_at, hold_event_id)
+    values (a.tenant_id, v_loc, v_pid, bt.id, true, v_reason, a.user_id, v_now, v_event) returning id into v_hold;
+    perform app.hold_line_add(a.tenant_id, v_hold, v_loc, v_pid, pk.id, bt.id, v_qty);
+  end if;
 
   perform app.audit(a.tenant_id, a.user_id, 'STOCK_STATUS_MOVED', 'inventory_event', v_event,
                     pg_catalog.jsonb_build_object('from', v_from, 'to', v_to, 'qty', v_qty, 'valueIdr', v_val,
                       'packageVersionId', pk.id, 'batchId', bt.id, 'reason', v_reason, 'referenceDocument', v_ref,
-                      'reauthGrantId', v_grant));
+                      'reauthGrantId', v_grant, 'holdId', v_hold));
   v_resp := pg_catalog.jsonb_build_object('eventId', v_event, 'productId', v_pid, 'from', v_from, 'to', v_to,
-              'qty', v_qty, 'qtyBase', v_qty::bigint * pk.factor, 'valueMovedIdr', v_val);
+              'qty', v_qty, 'qtyBase', v_qty::bigint * pk.factor, 'valueMovedIdr', v_val, 'holdId', v_hold);
   return app.idem_finish(a.tenant_id, 'inventory.move', p_key, v_resp);
 end $$;
 
@@ -807,6 +883,7 @@ begin
             order by b.package_version_id, b.batch_id loop
     perform app.stock_post(a.tenant_id, v_event, 'HOLD', v_loc, v_pid, r.package_version_id, r.batch_id, 'SALEABLE', -r.qty, r.factor, a.user_id, v_now);
     perform app.stock_post(a.tenant_id, v_event, 'HOLD', v_loc, v_pid, r.package_version_id, r.batch_id, 'HELD', r.qty, r.factor, a.user_id, v_now);
+    perform app.hold_line_add(a.tenant_id, v_hold, v_loc, v_pid, r.package_version_id, r.batch_id, r.qty);
     v_base := v_base + r.qty::bigint * r.factor;
   end loop;
   v_val := app.pool_move(a.tenant_id, v_event, v_loc, v_pid, 'SALEABLE', 'HELD', v_base, a.user_id, v_now);
@@ -819,15 +896,15 @@ begin
 end $$;
 
 -- ------------------------------------------------------------------ POST /inventory/holds/{id}/release (Owner)
--- Hanya Owner (dicek di sini). Semua stok berstatus HELD dalam cakupan penahanan ini (produk, atau satu batch)
--- dikembalikan ke siap jual, KECUALI batch kedaluwarsa atau yang masih dicakup penahanan aktif lain: itu TETAP
--- ditahan dan dilaporkan di notReleased (tidak dibuang diam-diam). Dengan aturan ini stok tidak bisa "yatim"
--- (tetap HELD padahal semua penahanan sudah dilepas) saat penahanan produk & batch bertumpuk.
+-- Hanya Owner + reautentikasi. Yang dikembalikan ke siap jual HANYA unit milik penahanan ini (stock_hold_line).
+-- Batch kedaluwarsa tetap HELD (BATCH_EXPIRED). Unit yang juga dicakup penahanan aktif lain (tidak parsial)
+-- dipindahkan kepemilikannya ke penahanan itu (OTHER_HOLD_ACTIVE) sehingga tidak "yatim" dan ikut dilepas saat
+-- penahanan itu dilepas. HELD tanpa asal di cakupan ini tidak disentuh dan dilaporkan NO_HOLD_ORIGIN (fail-closed).
 create function app.stock_release(p_key uuid, p_hold uuid, p_body jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare
   a record; v_prev jsonb; h record; v_reason text; v_event uuid; v_now timestamptz := pg_catalog.clock_timestamp();
-  v_today date; r record; v_base bigint := 0; v_val bigint;
+  v_today date; r record; v_base bigint := 0; v_val bigint; v_other uuid; v_cur integer; v_take integer;
   v_rel jsonb := '[]'::jsonb; v_not jsonb := '[]'::jsonb; v_resp jsonb;
 begin
   select * into a from iam.current_actor();
@@ -857,28 +934,61 @@ begin
   update biz.stock_hold x set released_by = a.user_id, released_at = v_now, release_reason = v_reason, release_event_id = v_event
    where x.tenant_id = a.tenant_id and x.id = p_hold;
 
-  for r in select b.package_version_id, b.batch_id, b.qty q, v.factor, bt.expires_on
+  -- HELD tanpa asal dalam cakupan (saldo HELD > unit milik penahanan aktif mana pun): dilaporkan, tidak dibuka.
+  for r in select b.package_version_id, b.batch_id, b.qty - coalesce((select sum(l.qty) from biz.stock_hold_line l
+                    join biz.stock_hold o on o.tenant_id = l.tenant_id and o.id = l.hold_id
+                   where l.tenant_id = b.tenant_id and l.location_id = b.location_id and l.product_id = b.product_id
+                     and l.package_version_id = b.package_version_id and l.batch_id = b.batch_id
+                     and (o.released_at is null or o.id = p_hold)), 0) q
              from biz.stock_balance b
-             join biz.package_version v on v.tenant_id = b.tenant_id and v.id = b.package_version_id
-             join biz.batch bt on bt.tenant_id = b.tenant_id and bt.id = b.batch_id
             where b.tenant_id = a.tenant_id and b.location_id = h.location_id and b.product_id = h.product_id
               and b.status = 'HELD' and b.qty > 0 and (h.batch_id is null or b.batch_id = h.batch_id)
             order by b.package_version_id, b.batch_id loop
+    if r.q > 0 then
+      v_not := v_not || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
+                 'batchId', r.batch_id, 'qty', r.q, 'reason', 'NO_HOLD_ORIGIN'));
+    end if;
+  end loop;
+
+  for r in select l.package_version_id, l.batch_id, l.qty q, v.factor, bt.expires_on
+             from biz.stock_hold_line l
+             join biz.package_version v on v.tenant_id = l.tenant_id and v.id = l.package_version_id
+             join biz.batch bt on bt.tenant_id = l.tenant_id and bt.id = l.batch_id
+            where l.tenant_id = a.tenant_id and l.hold_id = p_hold and l.qty > 0
+            order by l.package_version_id, l.batch_id for update of l loop
+    update biz.stock_hold_line l set qty = 0
+     where l.tenant_id = a.tenant_id and l.hold_id = p_hold and l.package_version_id = r.package_version_id and l.batch_id = r.batch_id;
     if r.expires_on is not null and r.expires_on < v_today then
       v_not := v_not || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
                  'batchId', r.batch_id, 'qty', r.q, 'reason', 'BATCH_EXPIRED'));
       continue;
     end if;
-    if app.hold_active(a.tenant_id, h.location_id, h.product_id, r.batch_id) then
+    select o.id into v_other from biz.stock_hold o
+     where o.tenant_id = a.tenant_id and o.location_id = h.location_id and o.product_id = h.product_id
+       and o.released_at is null and not o.partial and (o.batch_id is null or o.batch_id = r.batch_id)
+     order by o.held_at, o.id limit 1;
+    if v_other is not null then
+      perform app.hold_line_add(a.tenant_id, v_other, h.location_id, h.product_id, r.package_version_id, r.batch_id, r.q);
       v_not := v_not || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
-                 'batchId', r.batch_id, 'qty', r.q, 'reason', 'OTHER_HOLD_ACTIVE'));
+                 'batchId', r.batch_id, 'qty', r.q, 'reason', 'OTHER_HOLD_ACTIVE', 'transferredToHoldId', v_other));
       continue;
     end if;
-    perform app.stock_post(a.tenant_id, v_event, 'RELEASE', h.location_id, h.product_id, r.package_version_id, r.batch_id, 'HELD', -r.q, r.factor, a.user_id, v_now);
-    perform app.stock_post(a.tenant_id, v_event, 'RELEASE', h.location_id, h.product_id, r.package_version_id, r.batch_id, 'SALEABLE', r.q, r.factor, a.user_id, v_now);
-    v_base := v_base + r.q::bigint * r.factor;
-    v_rel := v_rel || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
-               'batchId', r.batch_id, 'qty', r.q));
+    select b.qty into v_cur from biz.stock_balance b
+     where b.tenant_id = a.tenant_id and b.location_id = h.location_id and b.product_id = h.product_id
+       and b.package_version_id = r.package_version_id and b.batch_id = r.batch_id and b.status = 'HELD';
+    v_take := least(r.q, coalesce(v_cur, 0));                                                 -- @kontrol:HOLD_ATTRIBUTION
+-- @mutasi:HOLD_ATTRIBUTION v_take := coalesce(v_cur, 0);
+    if v_take > 0 then
+      perform app.stock_post(a.tenant_id, v_event, 'RELEASE', h.location_id, h.product_id, r.package_version_id, r.batch_id, 'HELD', -v_take, r.factor, a.user_id, v_now);
+      perform app.stock_post(a.tenant_id, v_event, 'RELEASE', h.location_id, h.product_id, r.package_version_id, r.batch_id, 'SALEABLE', v_take, r.factor, a.user_id, v_now);
+      v_base := v_base + v_take::bigint * r.factor;
+      v_rel := v_rel || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
+                 'batchId', r.batch_id, 'qty', v_take));
+    end if;
+    if v_take < r.q then
+      v_not := v_not || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('packageVersionId', r.package_version_id,
+                 'batchId', r.batch_id, 'qty', r.q - v_take, 'reason', 'NO_LONGER_HELD'));
+    end if;
   end loop;
   v_val := app.pool_move(a.tenant_id, v_event, h.location_id, h.product_id, 'HELD', 'SALEABLE', v_base, a.user_id, v_now);
 
@@ -902,7 +1012,10 @@ declare a record;
 begin
   select * into a from iam.current_actor();
   return pg_catalog.jsonb_build_object('items', coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-      'id', h.id, 'productId', h.product_id, 'locationId', h.location_id, 'batchId', h.batch_id,
+      'id', h.id, 'productId', h.product_id, 'locationId', h.location_id, 'batchId', h.batch_id, 'partial', h.partial,
+      'lines', coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('packageVersionId', l.package_version_id,
+                 'batchId', l.batch_id, 'qty', l.qty) order by l.package_version_id, l.batch_id)
+               from biz.stock_hold_line l where l.tenant_id = h.tenant_id and l.hold_id = h.id and l.qty > 0), '[]'::jsonb),
       'batchNumber', b.batch_number, 'expiresOn', b.expires_on, 'reason', h.reason, 'heldBy', h.held_by,
       'heldAt', h.held_at, 'active', h.released_at is null, 'releasedBy', h.released_by, 'releasedAt', h.released_at,
       'releaseReason', h.release_reason) order by h.held_at desc, h.id)

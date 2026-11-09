@@ -400,6 +400,11 @@ export async function inventoryTests(): Promise<void> {
       } finally {
         await admin(def.d);
       }
+      // Simulasi tanggal hanya untuk langkah ini: definisi asli pulih & tanggal toko kembali ke tanggal nyata.
+      const [after] = await admin<{ d: string; t: string; real: string }>(
+        `select pg_get_functiondef('app.tenant_today(uuid)'::regprocedure) d, app.tenant_today($1)::text t,
+                (clock_timestamp() at time zone 'Asia/Makassar')::date::text real`, [A.tenant]);
+      ok(after.d === def.d && after.t === after.real, `simulasi tanggal bocor: ${after.t} vs ${after.real}`);
       eq(relP.status, 200, relP.text);
       rs = await rows(A.token, p.id);
       const nr2 = relP.body.notReleased as { reason: string; batchId: string }[];
@@ -442,6 +447,90 @@ export async function inventoryTests(): Promise<void> {
       const ok2 = await move(A.token, { ...base, packageId: p.pkg.karton, from: "SALEABLE", to: "HELD", qty: 1 });
       eq(ok2.status, 201, `SALEABLE -> HELD tetap boleh: ${ok2.text}`);
       return "QUARANTINE->HELD & INSPECTION->HELD -> 409 (API & DB), ledger tetap; tahan+lepas tidak membuka karantina 3/pemeriksaan 2; total 41/Rp4.100.000; SALEABLE->HELD tetap 201";
+    });
+
+    // Invarian asal HELD: per dimensi, unit milik penahanan aktif <= saldo HELD; tidak ada saldo negatif.
+    const holdInvariant = async (tenant: string) => (await admin<{ n: number }>(
+      `select count(*)::int n from (
+         select l.location_id, l.product_id, l.package_version_id, l.batch_id, sum(l.qty) attr
+           from biz.stock_hold_line l join biz.stock_hold h on h.tenant_id=l.tenant_id and h.id=l.hold_id
+          where l.tenant_id=$1 and h.released_at is null group by 1,2,3,4) x
+       left join biz.stock_balance b on b.tenant_id=$1 and b.location_id=x.location_id and b.product_id=x.product_id
+        and b.package_version_id=x.package_version_id and b.batch_id=x.batch_id and b.status='HELD'
+       where x.attr > coalesce(b.qty,0)`, [tenant]))[0].n;
+
+    await test("INV-HOLD-ORIGIN-02", KA, "Pelepasan hanya mengembalikan unit milik penahanan itu: tahan parsial (pindah SALEABLE->HELD) tidak ikut dilepas oleh penahanan produk yang tidak terkait", async () => {
+      const p = await pesticide(A.token);
+      const b = await batchId(p.id, "B-01");
+      const part = await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "SALEABLE", to: "HELD", qty: 2, reason: "2 botol bocor" });
+      eq(part.status, 201, part.text);
+      ok(typeof part.body.holdId === "string", "pindah ke HELD membuat penahanan parsial");
+      const hp = await hold(ADM.token, { productId: p.id, reason: "cek mutu produk" });
+      eq(hp.status, 201, hp.text);
+      eq(Number(hp.body.heldQtyBase), 39, "penahanan produk hanya mengambil stok siap jual");
+      const rel = await ownerRelease(A.token, hp.body.holdId as string, "mutu aman");
+      eq(rel.status, 200, rel.text);
+      let rs = await rows(A.token, p.id);
+      ok(baseOf(rs, "SALEABLE") === 39 && baseOf(rs, "HELD") === 2, `setelah lepas produk: ${JSON.stringify(rs.map((x) => [x.status, x.qtyBase]))}`);
+      const list = await http("GET", "/inventory/holds", A.token);
+      const ph = (list.body.items as { id: string; partial: boolean; lines: { qty: number }[] }[]).find((x) => x.id === part.body.holdId);
+      ok(ph && ph.partial === true && ph.lines.length === 1 && ph.lines[0].qty === 2, `penahanan parsial: ${JSON.stringify(ph)}`);
+      const rel2 = await ownerRelease(A.token, part.body.holdId as string, "botol diganti segel");
+      eq(rel2.status, 200, rel2.text);
+      rs = await rows(A.token, p.id);
+      const pl = await pools(p.id);
+      ok(baseOf(rs, "SALEABLE") === 41 && baseOf(rs, "HELD") === 0 && sumPools(pl).q === 41 && sumPools(pl).v === 4_100_000, JSON.stringify(pl));
+      eq(await holdInvariant(A.tenant), 0, "invarian asal HELD");
+      return "parsial 2 botol + tahan produk 39; lepas produk -> 39 kembali, 2 tetap HELD; lepas parsial (reauth) -> 41/Rp4.100.000";
+    });
+
+    await test("INV-HOLD-ORIGIN-03", KA, "HELD tanpa asal (simulasi data lama) tidak dibuka (fail-closed, NO_HOLD_ORIGIN); penerimaan & buka karton ke/di HELD ditolak (API & SQL)", async () => {
+      const p = await pesticide(A.token);
+      const b = await batchId(p.id, "B-01");
+      const hp = await hold(ADM.token, { productId: p.id, reason: "penahanan lama" });
+      eq(hp.status, 201, hp.text);
+      // Simulasi struktur lama: unit HELD ada di saldo/ledger tetapi tanpa catatan asal penahanan.
+      await admin("update biz.stock_hold_line set qty = 0 where hold_id = $1", [hp.body.holdId]);
+      const s0 = await pools(p.id);
+      const rel = await ownerRelease(A.token, hp.body.holdId as string, "lepas penahanan lama");
+      eq(rel.status, 200, rel.text);
+      const nr = rel.body.notReleased as { reason: string; qty: number; packageVersionId: string }[];
+      const noOrigin = nr.filter((x) => x.reason === "NO_HOLD_ORIGIN");
+      ok(Number(rel.body.releasedQtyBase) === 0 && noOrigin.length === 2, `lepas: ${rel.text}`);
+      const s1 = await pools(p.id);
+      ok(s1.HELD.q === 41 && s1.SALEABLE.q === 0 && s1.HELD.v === s0.HELD.v, `${JSON.stringify(s0)} -> ${JSON.stringify(s1)}`);
+      const p2 = await pesticide(A.token);
+      const b2 = await batchId(p2.id, "B-01");
+      const before = await ledgerCount(p2.id);
+      const rc = await receive(A.token, { productId: p2.id, lines: [line(p2.pkg.botol, 1, { status: "HELD" })] });
+      const rcSql = await errOf(sqlReceive(A.token, { productId: p2.id, lines: [line(p2.pkg.botol, 1, { status: "HELD" })] }));
+      const op = await openPkg(A.token, p2.pkg.karton, { batchId: b2, physicalConfirmed: true, status: "HELD" });
+      const opSql = await errOf(asActor(A.token, "select app.package_open($1, $2, $3::jsonb)", [randomUUID(), p2.pkg.karton, JSON.stringify({ batchId: b2, physicalConfirmed: true, status: "HELD" })]));
+      ok(rc.status === 409 && rc.body.code === "HELD_VIA_HOLD_ONLY" && rcSql === "HELD_VIA_HOLD_ONLY", `terima ke HELD: ${rc.status}:${String(rc.body.code)} / ${rcSql}`);
+      ok(op.status === 409 && op.body.code === "HELD_VIA_HOLD_ONLY" && opSql === "HELD_VIA_HOLD_ONLY", `buka karton HELD: ${op.status}:${String(op.body.code)} / ${opSql}`);
+      eq(await ledgerCount(p2.id), before, "ledger tidak bertambah");
+      void b;
+      return "HELD tanpa asal 41 tetap HELD (2 baris NO_HOLD_ORIGIN, nilai tetap); terima ke HELD & buka karton HELD -> 409 (API & SQL)";
+    });
+
+    await test("INV-HOLD-ORIGIN-04", KA, "HELD -> DAMAGED mengurangi asal penahanan dengan benar; pelepasan sisa tidak melebihi saldo; invarian asal HELD terjaga di seluruh toko", async () => {
+      const p = await pesticide(A.token);
+      const b = await batchId(p.id, "B-01");
+      const part = await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "SALEABLE", to: "HELD", qty: 3, reason: "segel longgar" });
+      eq(part.status, 201, part.text);
+      const dmg = await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "HELD", to: "DAMAGED", qty: 1, reason: "1 botol bocor" });
+      eq(dmg.status, 201, dmg.text);
+      const [ln] = await admin<{ q: number }>("select qty q from biz.stock_hold_line where hold_id=$1", [part.body.holdId]);
+      eq(ln.q, 2, "unit milik penahanan setelah 1 rusak");
+      const rel = await ownerRelease(A.token, part.body.holdId as string, "2 sisanya aman");
+      eq(rel.status, 200, rel.text);
+      const pl = await pools(p.id);
+      ok(Number(rel.body.releasedQtyBase) === 2 && pl.HELD.q === 0 && pl.DAMAGED.q === 1 && pl.SALEABLE.q === 40
+         && sumPools(pl).q === 41 && sumPools(pl).v === 4_100_000, `${rel.text} ${JSON.stringify(pl)}`);
+      eq(await holdInvariant(A.tenant), 0, "invarian asal HELD (seluruh toko A)");
+      const [neg] = await admin<{ n: number }>("select count(*)::int n from biz.stock_balance where qty < 0");
+      eq(neg.n, 0, "stok negatif");
+      return "parsial 3 -> rusak 1 -> asal tinggal 2 -> lepas 2; rusak 1, siap jual 40, total 41/Rp4.100.000; invarian & non-negatif terjaga";
     });
 
     await test("INV-HOLD-03", KD, "Tahan vs penerimaan siap jual serentak (10 putaran): saat penahanan aktif, stok siap jual dalam cakupan selalu 0", async () => {

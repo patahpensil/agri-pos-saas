@@ -47,6 +47,7 @@ const DB_CODES: Record<string, [number, string]> = {
   REAUTH_REQUIRED: [403, "Tindakan ini butuh konfirmasi ulang sandi Owner"],
   HELD_RELEASE_REQUIRED: [409, "Stok ditahan hanya bisa kembali siap jual lewat pelepasan penahanan"],
   STATUS_MOVE_NOT_ALLOWED: [409, "Perpindahan status ini tidak diizinkan"],
+  HELD_VIA_HOLD_ONLY: [409, "Status DITAHAN hanya lewat Tahan Penjualan; terima ke karantina/pemeriksaan atau lepas penahanan dulu"],
   SUBSIDY_RECEIPT_SEPARATE: [409, "Pupuk subsidi wajib diterima lewat inventori subsidi, bukan Tambah Stok umum"],
   INVENTORY_INCONSISTENT: [409, "Saldo stok tidak konsisten; jalankan rekonsiliasi"],
 };
