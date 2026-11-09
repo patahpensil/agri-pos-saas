@@ -209,6 +209,35 @@ export async function inventoryTests(): Promise<void> {
       return "BONUS_ZERO -> VERIFIED + alasan/asal tersimpan; UNVERIFIED -> costStatus UNVERIFIED";
     });
 
+    await test("INV-SUB-01", KA, "Pupuk subsidi tidak bisa ditambah lewat Tambah Stok umum (API, fungsi DB, dan insert ledger langsung); produk nonsubsidi tetap bisa", async () => {
+      const sub = await createProduct(A.token, {
+        sku: sku("SUB"), name: "Urea Subsidi", category: "FERTILIZER", subsidized: true, baseUnit: "kg",
+        packages: [{ key: "sak", form: "SEALED", factor: 50, label: "Sak 50 kg", mayOpen: false }],
+        opening: [{ packageKey: "sak", qty: 0, cost: { basis: "KNOWN", totalIdr: 0 } }],
+      });
+      const before = await ledgerCount(sub.id);
+      const body = { productId: sub.id, lines: [{ packageId: sub.pkg.sak, qty: 10, status: "SALEABLE", cost: { basis: "KNOWN", totalIdr: 1_125_000 } }] };
+      const r1 = await receive(A.token, body);
+      const r2 = await receive(ADM.token, { ...body, lines: [{ ...body.lines[0], status: "QUARANTINE" }] });
+      const e3 = await errOf(asActor(A.token, "select app.inventory_receive($1, $2::jsonb)", [randomUUID(), JSON.stringify(body)]));
+      ok(r1.status === 409 && r1.body.code === "SUBSIDY_RECEIPT_SEPARATE", `Owner: ${r1.status} ${String(r1.body.code)}`);
+      ok(r2.status === 409 && r2.body.code === "SUBSIDY_RECEIPT_SEPARATE", `Admin/karantina: ${r2.status} ${String(r2.body.code)}`);
+      eq(e3, "SUBSIDY_RECEIPT_SEPARATE", "fungsi database langsung");
+      // Lapis kedua: insert ledger RECEIPT langsung (superuser, melewati fungsi) tetap ditolak trigger.
+      const [ev] = await admin<{ id: string; loc: string; b: string }>(
+        "select e.id::text, e.location_id::text loc, (select id::text from biz.batch where product_id=$1 limit 1) b from biz.inventory_event e where e.product_id=$1 and e.kind='OPENING'", [sub.id]);
+      const e4 = await errOf(admin(
+        `insert into biz.inventory_ledger (tenant_id, event_id, movement, location_id, product_id, package_version_id, batch_id, status, qty_delta, qty_base_delta, actor_user_id, event_at)
+         select $1, $2, 'RECEIPT', $3, $4, $5, $6, 'SALEABLE', 1, 50, created_by, now() from biz.product where id=$4`, [A.tenant, ev.id, ev.loc, sub.id, sub.pkg.sak, ev.b]));
+      eq(e4, "SUBSIDY_RECEIPT_SEPARATE", "insert ledger langsung");
+      eq(await ledgerCount(sub.id), before, "ledger subsidi tidak bertambah");
+      const pl = await pools(sub.id);
+      eq(pl.SALEABLE.q, 0, "stok subsidi tetap 0");
+      const p = await pesticide(A.token);
+      eq((await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1)] })).status, 201, "nonsubsidi tetap bisa");
+      return "API Owner/Admin 409 SUBSIDY_RECEIPT_SEPARATE; fungsi DB & insert ledger langsung ditolak; stok subsidi tetap 0; nonsubsidi 201";
+    });
+
     // ------------------------------------------------------------------ buka karton (INV-05)
     await test("ST-INV-02", KA, "Stok 3 karton isi 12 + 5 botol -> total setara 41, tidak dihitung ganda", async () => {
       const p = await pesticide(A.token);

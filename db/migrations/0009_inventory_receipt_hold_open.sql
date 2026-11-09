@@ -102,6 +102,19 @@ begin
 end $$;
 revoke execute on function biz.stock_hold_guard() from public;
 create trigger stock_hold_guard before update or delete on biz.stock_hold for each row execute function biz.stock_hold_guard();
+-- SUB-03 lapis kedua (berlaku untuk SEMUA jalur tulis, termasuk fungsi lain di masa depan): ledger umum
+-- 'RECEIPT' tidak boleh menambah stok produk bersubsidi. Penerimaan subsidi kelak memakai jenis tersendiri.
+create function biz.ledger_subsidy_guard() returns trigger
+language plpgsql set search_path = pg_catalog, pg_temp as $$
+begin
+  if new.movement = 'RECEIPT' and exists (select 1 from biz.product p
+                                           where p.tenant_id = new.tenant_id and p.id = new.product_id and p.is_subsidized) then
+    raise exception 'SUBSIDY_RECEIPT_SEPARATE' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+revoke execute on function biz.ledger_subsidy_guard() from public;
+create trigger inventory_ledger_subsidy_guard before insert on biz.inventory_ledger for each row execute function biz.ledger_subsidy_guard();  -- @kontrol:SUBSIDY_SPLIT
 create trigger stock_hold_no_truncate before truncate on biz.stock_hold for each statement execute function iam.reject_change();
 reset role;
 
@@ -312,6 +325,11 @@ begin
   end if;
   v_pid := (p_body->>'productId')::uuid;
   perform app.inv_lock_product(a.tenant_id, v_pid);
+  -- SUB-03 / J-06: stok pupuk subsidi hanya bertambah lewat penerimaan inventori bersubsidi (/subsidy/receipts,
+  -- modul subsidi terpisah), tidak lewat Tambah Stok umum. Lapis kedua: trigger biz.ledger_subsidy_guard.
+  if (select p.is_subsidized from biz.product p where p.tenant_id = a.tenant_id and p.id = v_pid) then        -- @kontrol:SUBSIDY_SPLIT
+    raise exception 'SUBSIDY_RECEIPT_SEPARATE' using errcode = 'P0001';                                        -- @kontrol:SUBSIDY_SPLIT
+  end if;                                                                                                      -- @kontrol:SUBSIDY_SPLIT
   v_loc := app.inv_location(a.tenant_id, p_body);
   v_today := app.tenant_today(a.tenant_id);
 
