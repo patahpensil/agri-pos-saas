@@ -24,7 +24,7 @@ alter table iam.reauth_grant add constraint reauth_grant_action_check
 
 create table biz.stock_count (
  tenant_id uuid not null,
- id uuid not null default ext.gen_random_uuid(),
+ id uuid not null default pg_catalog.gen_random_uuid(),
  product_id uuid not null,
  location_id uuid not null,
  counted_at timestamptz not null,
@@ -250,9 +250,9 @@ begin
    if v_pkgrow.id is null or not exists (
       select 1 from biz.batch b where b.tenant_id=a.tenant_id and b.product_id=p.id and b.id=v_batch
    ) then raise exception 'NOT_FOUND' using errcode='P0001'; end if;
-   select coalesce(b.qty,0) into v_qty from biz.stock_balance b
+   select coalesce((select b.qty from biz.stock_balance b
     where b.tenant_id=a.tenant_id and b.location_id=v_loc and b.product_id=p.id
-      and b.package_version_id=v_pkg and b.batch_id=v_batch and b.status='SALEABLE';
+      and b.package_version_id=v_pkg and b.batch_id=v_batch and b.status='SALEABLE'),0) into v_qty;
    v_move:=app.count_movement_after(a.tenant_id,v_loc,p.id,v_pkg,v_batch,v_counted);
    v_qty:=v_qty-v_move;
    if v_qty<0 or v_qty>2147483647 then raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if;
@@ -267,7 +267,7 @@ begin
      if v_cost is null or jsonb_typeof(v_cost)<>'object'
        or v_cost - 'basis' - 'totalIdr' - 'reason' - 'origin'<>'{}'::jsonb
        or v_basis not in ('KNOWN','BONUS_ZERO','UNVERIFIED')
-       or (v_basis='KNOWN' and (v_val is null or v_val<0))
+       or (v_basis='KNOWN' and (v_val is null or v_val<=0))
        or (v_basis in ('BONUS_ZERO','UNVERIFIED') and coalesce(v_val,0)<>0)
        or (v_basis in ('BONUS_ZERO','UNVERIFIED') and nullif(btrim(coalesce(v_cost->>'reason','')),'') is null)
        or (v_basis='BONUS_ZERO' and nullif(btrim(coalesce(v_cost->>'origin','')),'') is null)
@@ -352,7 +352,7 @@ begin
       raise exception 'HOLD_ACTIVE' using errcode='P0001'; end if;
    select coalesce(b.qty,0) into v_qty from biz.stock_balance b
     where b.tenant_id=a.tenant_id and b.location_id=c.location_id and b.product_id=c.product_id
-      and b.package_version_id=l.package_version_id and b.batch_id=l.batch_id and b.status='SALEABLE';
+      and b.package_version_id=l.package_version_id and b.batch_id=l.batch_id and b.status='SALEABLE'),0) into v_qty;
    v_after:=app.count_movement_after(a.tenant_id,c.location_id,c.product_id,l.package_version_id,l.batch_id,c.counted_at);
    v_asof:=v_qty-v_after;
    if v_asof<>l.system_qty_at_count then raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if;
