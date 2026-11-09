@@ -1,8 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { createHash } from "node:crypto";
 import { DbService } from "../db/db.service";
 import { AppError, db, notFound } from "../common/errors";
-import { canonicalJson, isUuid, parseBody, schemas } from "../common/validation";
+import { isUuid, parseBody, schemas } from "../common/validation";
 import { AuthedRequest, SessionGuard } from "../auth/session.guard";
 
 // Master produk & stok awal (PRD-01..07). Toko, aktor, peran, dan status paket ditentukan database
@@ -17,12 +16,12 @@ export class CatalogController {
   async create(@Req() req: AuthedRequest, @Headers("idempotency-key") key: string | undefined, @Body() body: unknown) {
     const b = parseBody(schemas.productCreate, body);
     if (!key || !isUuid(key)) throw new AppError(400, "IDEMPOTENCY_KEY_REQUIRED", "Header Idempotency-Key (UUID) wajib");
-    const hash = createHash("sha256").update(canonicalJson(b)).digest();
+    // Identitas permintaan idempoten dihitung database dari jsonb yang diterimanya (CAT-AUD-03).
     return db(
       this.dbs.withActor(req.sessionToken!, async (c) => {
         const r = await c.query<{ res: { productId: string; openingEventId: string; replayed?: boolean } }>(
-          "select app.product_create($1, $2, $3::jsonb) as res",
-          [key.toLowerCase(), hash, JSON.stringify(b)],
+          "select app.product_create($1, $2::jsonb) as res",
+          [key.toLowerCase(), JSON.stringify(b)],
         );
         const res = r.rows[0].res;
         const p = await c.query<{ p: unknown }>("select app.product_get($1) as p", [res.productId]);

@@ -143,10 +143,12 @@ jobs:
           bash db/test/mutation.sh INVITE_EXPIRY AUD-OTP-04 || rc=1
           bash db/test/mutation.sh LOCK_CATALOG CAT-17 || rc=1
           bash db/test/mutation.sh FACTOR_LOCK CAT-16 || rc=1
-          bash db/test/mutation.sh IDEM_HASH CAT-09 || rc=1
+          bash db/test/mutation.sh IDEM_HASH CAT-09,CAT-AUD-03 || rc=1
           bash db/test/mutation.sh COST_FORMULA CAT-14 || rc=1
           bash db/test/mutation.sh BIZ_GRANT CAT-11 || rc=1
           bash db/test/mutation.sh NO_FORCE_BIZ T-DB-02 || rc=1
+          bash db/test/mutation.sh PRODUCT_FK CAT-AUD-01 || rc=1
+          bash db/test/mutation.sh TRUNCATE_GUARD CAT-AUD-02 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

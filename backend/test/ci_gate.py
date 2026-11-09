@@ -24,6 +24,8 @@ COMMON = (
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
     + [("CAT-NEG-01", DB), ("CAT-API-01", API), ("INV-03-EXP", API), ("ST-INV-01-MASTER", API), ("ST-INV-02", API),
        ("ST-COST-01", DB), ("ST-COST-04", API), ("ST-COST-05", DB)]
+    # Audit PR #6
+    + [("CAT-AUD-01", DB), ("CAT-AUD-02", DB), ("CAT-AUD-03", DB), ("CAT-AUD-03", API)]
 )
 # Uji mutasi (database terpisah, target langsung): kontrol dihapus -> ID ini WAJIB FAIL.
 MUTATIONS = {
@@ -37,10 +39,12 @@ MUTATIONS = {
     "invite_expiry": ["AUD-OTP-04"],
     "lock_catalog": ["CAT-17"],
     "factor_lock": ["CAT-16"],
-    "idem_hash": ["CAT-09"],
+    "idem_hash": ["CAT-09", "CAT-AUD-03"],
     "cost_formula": ["CAT-14"],
     "biz_grant": ["CAT-11"],
     "no_force_biz": ["T-DB-02"],
+    "product_fk": ["CAT-AUD-01"],
+    "truncate_guard": ["CAT-AUD-02"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),

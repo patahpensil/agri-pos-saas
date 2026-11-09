@@ -120,7 +120,7 @@ export async function catalogTests(): Promise<void> {
       ok(res.every((r) => r.status === 400), res.map((r) => r.status).join(","));
       const body = fertilizer(sku(), 0);
       (body.packages[0] as Record<string, unknown>).factor = 0;
-      const e = await errOf(asActor(A.token, "select app.product_create($1, $2, $3::jsonb)", [randomUUID(), Buffer.alloc(32, 1), JSON.stringify(body)]));
+      const e = await errOf(asActor(A.token, "select app.product_create($1, $2::jsonb)", [randomUUID(), JSON.stringify(body)]));
       ok(e.startsWith("23514"), `database: ${e}`);
       const loose = fertilizer(sku(), 1);
       loose.packages = [{ key: "sak", form: "LOOSE", factor: 50, label: "x", mayOpen: false }];
@@ -178,7 +178,7 @@ export async function catalogTests(): Promise<void> {
       const body = pesticide(s, { name: "FAIL_INJECT", barcode: bc() });
       let e = "";
       try {
-        e = await errOf(asActor(A.token, "select app.product_create($1, $2, $3::jsonb)", [key, Buffer.alloc(32, 2), JSON.stringify(body)]));
+        e = await errOf(asActor(A.token, "select app.product_create($1, $2::jsonb)", [key, JSON.stringify(body)]));
       } finally {
         await admin("drop trigger t_cat_fail on biz.value_ledger");
         await admin("drop function public.t_cat_fail()");
@@ -510,6 +510,161 @@ export async function catalogTests(): Promise<void> {
       const e2 = await errOf(admin("update biz.cost_pool set qty_base = 0 where product_id=$1", [r.body.productId]));
       ok(e1.startsWith("23514") && e2.startsWith("23514"), `${e1} | ${e2}`);
       return "qty < 0 -> 23514; kolam qty 0 dengan nilai > 0 -> 23514";
+    });
+
+    // ------------------------------------------------------------------ audit PR #6
+    await test("CAT-AUD-01", KD, "Referensi silang antar-produk (kemasan/batch/peristiwa/barcode/varian pengganti) ditolak constraint database", async () => {
+      const ra = await post(A.token, pesticide(sku("XA")));
+      const rb = await post(A.token, fertilizer(sku("XB"), 2, { opening: [{ packageKey: "sak", qty: 2, batch: { number: "PB-1" }, cost: { basis: "KNOWN", totalIdr: 500_000 } }] }));
+      const ids = async (pid: string) => (await admin<{ pkg: string; batch: string; ev: string; loc: string; uid: string }>(
+        `select (select id::text from biz.package_version where product_id=$1 order by created_at limit 1) pkg,
+                (select id::text from biz.batch where product_id=$1 limit 1) batch,
+                (select id::text from biz.inventory_event where product_id=$1) ev,
+                (select location_id::text from biz.inventory_event where product_id=$1) loc,
+                (select actor_user_id::text from biz.inventory_event where product_id=$1) uid`, [pid]))[0];
+      const a = await ids(ra.body.productId as string);
+      const b = await ids(rb.body.productId as string);
+      const pa = ra.body.productId as string;
+      const c = new Client({ host: ADMIN_HOST, port: ADMIN_PORT, user: ADMIN_USER, database: DBNAME });   // superuser: penolakan murni dari constraint, bukan izin
+      await c.connect();
+      const out: Record<string, string> = {};
+      const attempt = async (name: string, sql: string, params: unknown[]) => {
+        await c.query("savepoint s");
+        try {
+          await c.query(sql, params);
+          out[name] = "DITERIMA";
+        } catch (e) {
+          const x = e as { code?: string; constraint?: string };
+          out[name] = `${x.code}:${x.constraint ?? ""}`;
+        }
+        await c.query("rollback to savepoint s");
+      };
+      try {
+        await c.query("begin");
+        await attempt("stok A + kemasan B", "insert into biz.stock_balance (tenant_id,location_id,product_id,package_version_id,batch_id,status,qty) values ($1,$2,$3,$4,$5,'HELD',0)", [A.tenant, a.loc, pa, b.pkg, a.batch]);
+        await attempt("stok A + batch B", "insert into biz.stock_balance (tenant_id,location_id,product_id,package_version_id,batch_id,status,qty) values ($1,$2,$3,$4,$5,'HELD',0)", [A.tenant, a.loc, pa, a.pkg, b.batch]);
+        await attempt("ledger A + event B", "insert into biz.inventory_ledger (tenant_id,event_id,movement,location_id,product_id,package_version_id,batch_id,status,qty_delta,qty_base_delta,actor_user_id,event_at) values ($1,$2,'OPENING',$3,$4,$5,$6,'SALEABLE',0,0,$7,now())", [A.tenant, b.ev, a.loc, pa, a.pkg, a.batch, a.uid]);
+        await attempt("ledger nilai A + event B", "insert into biz.value_ledger (tenant_id,event_id,location_id,product_id,status,qty_base_delta,value_delta,cost_basis,actor_user_id,event_at) values ($1,$2,$3,$4,'SALEABLE',0,0,'KNOWN',$5,now())", [A.tenant, b.ev, a.loc, pa, a.uid]);
+        await attempt("barcode A + kemasan B", "insert into biz.barcode (tenant_id,code,product_id,package_version_id) values ($1,$2,$3,$4)", [A.tenant, bc(), pa, b.pkg]);
+        await attempt("varian A menggantikan varian B", "insert into biz.package_version (tenant_id,product_id,label,form,factor,supersedes_id) values ($1,$2,'X','SEALED',6,$3)", [A.tenant, pa, b.pkg]);
+        // kontrol positif: kombinasi sah tetap diterima
+        await attempt("SAH stok A + kemasan & batch A", "insert into biz.stock_balance (tenant_id,location_id,product_id,package_version_id,batch_id,status,qty) values ($1,$2,$3,$4,$5,'HELD',0)", [A.tenant, a.loc, pa, a.pkg, a.batch]);
+        await attempt("SAH ledger A + event A", "insert into biz.inventory_ledger (tenant_id,event_id,movement,location_id,product_id,package_version_id,batch_id,status,qty_delta,qty_base_delta,actor_user_id,event_at) values ($1,$2,'OPENING',$3,$4,$5,$6,'SALEABLE',0,0,$7,now())", [A.tenant, a.ev, a.loc, pa, a.pkg, a.batch, a.uid]);
+        await attempt("SAH varian A menggantikan varian A", "insert into biz.package_version (tenant_id,product_id,label,form,factor,supersedes_id) values ($1,$2,'X','SEALED',6,$3)", [A.tenant, pa, a.pkg]);
+        await attempt("SAH barcode A + kemasan A", "insert into biz.barcode (tenant_id,code,product_id,package_version_id) values ($1,$2,$3,$4)", [A.tenant, bc(), pa, (await c.query("select id from biz.package_version where product_id=$1 and form='LOOSE'", [pa])).rows[0].id]);
+      } finally {
+        await c.query("rollback").catch(() => undefined);
+        await c.end();
+      }
+      const bad = Object.entries(out).filter(([k]) => !k.startsWith("SAH"));
+      const good = Object.entries(out).filter(([k]) => k.startsWith("SAH"));
+      ok(bad.every(([, v]) => v.startsWith("23503:")), `referensi silang lolos: ${JSON.stringify(out)}`);
+      ok(good.every(([, v]) => v === "DITERIMA"), `kombinasi sah ditolak: ${JSON.stringify(out)}`);
+      return bad.map(([k, v]) => `${k} -> ${v}`).join("; ") + `; ${good.length} kombinasi sah diterima (lalu di-rollback)`;
+    });
+
+    await test("CAT-AUD-02", KD, "Tabel append-only menolak UPDATE/DELETE/TRUNCATE (pemilik & superuser); histori identik; event sah tetap bisa dicatat", async () => {
+      const tables = ["biz.inventory_event", "biz.inventory_ledger", "biz.value_ledger", "biz.audit_event", "biz.inventory_alert"];
+      await http("POST", "/inventory/reconciliation", A.token, {});   // pastikan tabel lain terisi
+      const r0 = await post(A.token, fertilizer(sku("APPEND"), 1));
+      eq(r0.status, 201, "data awal");
+      await admin("insert into biz.inventory_alert (tenant_id, kind, detail, detected_by) select tenant_id, 'STOCK_MISMATCH', '{\"uji\":true}', actor_user_id from biz.inventory_event where product_id=$1", [r0.body.productId]);
+      const snap = async () => {
+        const o: Record<string, string> = {};
+        for (const t of tables) o[t] = (await admin<{ s: string }>(`select count(*)::text || ':' || coalesce(md5(string_agg(x::text, '|' order by x::text)), '') s from ${t} x`))[0].s;
+        return o;
+      };
+      const before = await snap();
+      const res: string[] = [];
+      for (const t of tables) {
+        res.push(`${t}.superuser.update=${await errOf(admin(`update ${t} set tenant_id = tenant_id`))}`);
+        res.push(`${t}.superuser.delete=${await errOf(admin(`delete from ${t}`))}`);
+        res.push(`${t}.superuser.truncate=${await errOf(admin(`truncate ${t} cascade`))}`);
+        const c = new Client({ host: ADMIN_HOST, port: ADMIN_PORT, user: ADMIN_USER, database: DBNAME });
+        await c.connect();
+        try {
+          await c.query("set role migration_owner");          // role pemilik tabel
+          res.push(`${t}.owner.truncate=${await errOf(c.query(`truncate ${t} cascade`))}`);
+          // FORCE RLS: pemilik tanpa kebijakan tidak melihat baris -> 0 baris tersentuh (tidak ada perubahan)
+          const u = await c.query(`update ${t} set tenant_id = tenant_id`).then((x) => `rows=${x.rowCount}`, (e) => String(e.message));
+          res.push(`${t}.owner.update=${u}`);
+        } finally {
+          await c.end();
+        }
+      }
+      const after = await snap();
+      const rejected = res.filter((x) => /superuser\.(update|delete|truncate)=APPEND_ONLY|owner\.truncate=APPEND_ONLY/.test(x)).length;
+      const ownerUpd = res.filter((x) => /owner\.update=(rows=0|APPEND_ONLY)/.test(x)).length;
+      eq(rejected, tables.length * 4, `penolakan: ${res.filter((x) => !/APPEND_ONLY|rows=0/.test(x)).join(" | ")}`);
+      eq(ownerUpd, tables.length, "update oleh pemilik");
+      eq(JSON.stringify(after), JSON.stringify(before), "histori berubah");
+      const r1 = await post(A.token, fertilizer(sku("APPEND2"), 2));
+      eq(r1.status, 201, "event sah setelahnya");
+      ok((await count("select count(*)::int n from biz.inventory_event where product_id=$1", [r1.body.productId])) === 1, "event baru tercatat");
+      return `${rejected} operasi UPDATE/DELETE/TRUNCATE ditolak APPEND_ONLY (5 tabel); update pemilik 0 baris (FORCE RLS); isi 5 tabel identik (count+md5); event baru 201`;
+    });
+
+    await test("CAT-AUD-03", KD, "Idempotensi diikat ke jsonb yang diterima database: hash pemanggil tidak dipercaya, replay/konkurensi/normalisasi benar", async () => {
+      const K = randomUUID();
+      const bodyA = fertilizer(sku("IDA"), 3);
+      const bodyB = fertilizer(sku("IDB"), 5);
+      const call = (key: string, json: string) => asActor<{ r: { productId: string; replayed?: boolean } }>(A.token, "select app.product_create($1, $2::jsonb) r", [key, json]);
+      const state = async (s: string) => (await admin<{ p: number; ev: number; led: number }>(
+        `select (select count(*)::int from biz.product where tenant_id=$1 and sku=$2) p,
+                (select count(*)::int from biz.inventory_event e join biz.product x on x.id=e.product_id where x.tenant_id=$1 and x.sku=$2) ev,
+                (select count(*)::int from biz.inventory_ledger l join biz.product x on x.id=l.product_id where x.tenant_id=$1 and x.sku=$2) led`, [A.tenant, s]))[0];
+      // A. normal
+      const [a1] = await call(K, JSON.stringify(bodyA));
+      // B. replay sah
+      const [a2] = await call(K, JSON.stringify(bodyA));
+      const sA = await state(bodyA.sku);
+      ok(a2.r.productId === a1.r.productId && a2.r.replayed === true, `replay: ${JSON.stringify(a2.r)}`);
+      ok(sA.p === 1 && sA.ev === 1 && sA.led === 1, `replay menambah data: ${JSON.stringify(sA)}`);
+      // C/D. isi berbeda dengan kunci sama -> ditolak; tanda tangan lama (dengan hash pemanggil) sudah tidak ada
+      const d1 = await errOf(call(K, JSON.stringify(bodyB)));
+      const hashA = (await admin<{ h: Buffer }>("select sha256(convert_to($1::jsonb::text,'UTF8')) h", [JSON.stringify(bodyA)]))[0].h;
+      const d2 = await errOf(asActor(A.token, "select app.product_create($1, $2::bytea, $3::jsonb)", [K, hashA, JSON.stringify(bodyB)]));
+      const sB = await state(bodyB.sku);
+      eq(d1, "IDEMPOTENCY_PAYLOAD_MISMATCH", "kunci K + isi B");
+      ok(d2.startsWith("42883"), `jalur hash pemanggil: ${d2}`);
+      ok(sB.p === 0 && sB.ev === 0, `produk B terbentuk: ${JSON.stringify(sB)}`);
+      // E. 10 permintaan serentak dengan kunci sama
+      const K2 = randomUUID();
+      const bodyE = pesticide(sku("IDE"));
+      const outs = await Promise.all(Array.from({ length: 10 }, () => call(K2, JSON.stringify(bodyE)).then((r) => r[0].r.productId, (e) => `ERR:${e.message}`)));
+      const sE = await state(bodyE.sku);
+      ok(new Set(outs).size === 1 && !outs[0].startsWith("ERR"), `hasil serentak: ${[...new Set(outs)].join(",")}`);
+      ok(sE.p === 1 && sE.ev === 1 && sE.led === 2, `serentak: ${JSON.stringify(sE)}`);
+      // F. urutan kunci JSON berbeda = isi yang sama (normalisasi jsonb)
+      const K3 = randomUUID();
+      const bodyF = fertilizer(sku("IDF"), 4, { brand: "Merek Uji" });
+      const reordered = (o: unknown): unknown => Array.isArray(o) ? o.map(reordered)
+        : o && typeof o === "object" ? Object.fromEntries(Object.entries(o as Record<string, unknown>).reverse().map(([k, v]) => [k, reordered(v)])) : o;
+      const t1 = JSON.stringify(bodyF);
+      const t2 = JSON.stringify(reordered(bodyF));
+      ok(t1 !== t2, "teks JSON harus berbeda urutan");
+      const [f1] = await call(K3, t1);
+      const [f2] = await call(K3, t2);
+      const sF = await state(bodyF.sku);
+      ok(f2.r.productId === f1.r.productId && f2.r.replayed === true && sF.p === 1 && sF.ev === 1, `normalisasi: ${JSON.stringify({ f2: f2.r, sF })}`);
+      return "A ok; B replay produk sama tanpa data baru; C/D isi beda -> IDEMPOTENCY_PAYLOAD_MISMATCH, jalur hash pemanggil tidak ada (42883), produk B 0; E 10 serentak -> 1 produk/1 peristiwa; F urutan kunci beda -> replay";
+    });
+
+    await test("CAT-AUD-03", KA, "Idempotensi lewat API: replay sama, isi beda 409, urutan kunci beda tetap replay; dicek di database", async () => {
+      const K = randomUUID();
+      const bodyA = fertilizer(sku("APIA"), 2);
+      const r1 = await post(A.token, bodyA, K);
+      const r2 = await post(A.token, Object.fromEntries(Object.entries(bodyA).reverse()), K);
+      const r3 = await post(A.token, fertilizer(sku("APIB"), 2), K);
+      const [st] = await admin<{ p: number; ev: number; idem: number }>(
+        `select (select count(*)::int from biz.product where tenant_id=$1 and sku=$2) p,
+                (select count(*)::int from biz.inventory_event where product_id=$3) ev,
+                (select count(*)::int from biz.idempotency where tenant_id=$1 and key=$4) idem`, [A.tenant, bodyA.sku, r1.body.productId, K]);
+      eq(r1.status, 201, "pertama");
+      ok(r2.status === 201 && r2.body.productId === r1.body.productId && r2.body.replayed === true, `replay urutan beda: ${r2.text.slice(0, 120)}`);
+      ok(r3.status === 409 && r3.body.code === "IDEMPOTENCY_PAYLOAD_MISMATCH", `isi beda: ${r3.status}`);
+      ok(st.p === 1 && st.ev === 1 && st.idem === 1, JSON.stringify(st));
+      return "201; replay (urutan kunci dibalik) 201 produk sama; isi beda 409; database: 1 produk, 1 peristiwa, 1 kunci";
     });
 
     await test("CAT-API-01", KA, "Field asing/nested extra key & query asing ditolak 400", async () => {

@@ -220,20 +220,34 @@ create table biz.inventory_alert (
 );
 
 -- ------------------------------------------------------------------- trigger integritas (migration_owner)
-create trigger inventory_ledger_append_only before update or delete on biz.inventory_ledger
-  for each row execute function iam.reject_change();
-create trigger inventory_ledger_no_truncate before truncate on biz.inventory_ledger
-  for each statement execute function iam.reject_change();
-create trigger value_ledger_append_only before update or delete on biz.value_ledger
-  for each row execute function iam.reject_change();
-create trigger value_ledger_no_truncate before truncate on biz.value_ledger
-  for each statement execute function iam.reject_change();
-create trigger inventory_event_append_only before update or delete on biz.inventory_event
-  for each row execute function iam.reject_change();
-create trigger audit_event_append_only before update or delete on biz.audit_event
-  for each row execute function iam.reject_change();
-create trigger inventory_alert_append_only before update or delete on biz.inventory_alert
-  for each row execute function iam.reject_change();
+-- Append-only: UPDATE/DELETE (per baris) dan TRUNCATE (per pernyataan) ditolak untuk SEMUA role,
+-- termasuk pemilik tabel. Batas perlindungan: superuser tetap dapat menonaktifkan trigger
+-- (ALTER TABLE ... DISABLE TRIGGER atau session_replication_role = replica); itu dikendalikan lewat
+-- pembatasan akses superuser/operator, bukan oleh trigger ini.
+create trigger inventory_ledger_append_only before update or delete on biz.inventory_ledger for each row execute function iam.reject_change();
+create trigger value_ledger_append_only before update or delete on biz.value_ledger for each row execute function iam.reject_change();
+create trigger inventory_event_append_only before update or delete on biz.inventory_event for each row execute function iam.reject_change();
+create trigger audit_event_append_only before update or delete on biz.audit_event for each row execute function iam.reject_change();
+create trigger inventory_alert_append_only before update or delete on biz.inventory_alert for each row execute function iam.reject_change();
+create trigger inventory_ledger_no_truncate before truncate on biz.inventory_ledger for each statement execute function iam.reject_change();  -- @kontrol:TRUNCATE_GUARD
+create trigger value_ledger_no_truncate before truncate on biz.value_ledger for each statement execute function iam.reject_change();  -- @kontrol:TRUNCATE_GUARD
+create trigger inventory_event_no_truncate before truncate on biz.inventory_event for each statement execute function iam.reject_change();  -- @kontrol:TRUNCATE_GUARD
+create trigger audit_event_no_truncate before truncate on biz.audit_event for each statement execute function iam.reject_change();  -- @kontrol:TRUNCATE_GUARD
+create trigger inventory_alert_no_truncate before truncate on biz.inventory_alert for each statement execute function iam.reject_change();  -- @kontrol:TRUNCATE_GUARD
+
+-- (CAT-AUD-01) Kunci kandidat (tenant, produk, id) agar relasi bisa diikat ke PRODUK yang sama,
+-- bukan hanya ke toko yang sama.
+alter table biz.package_version add constraint package_version_product_key unique (tenant_id, product_id, id);
+alter table biz.batch add constraint batch_product_key unique (tenant_id, product_id, id);
+alter table biz.inventory_event add constraint inventory_event_scope_key unique (tenant_id, id, product_id, location_id);
+alter table biz.package_version add constraint package_version_supersedes_same_product foreign key (tenant_id, product_id, supersedes_id) references biz.package_version (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.barcode add constraint barcode_package_same_product foreign key (tenant_id, product_id, package_version_id) references biz.package_version (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.inventory_ledger add constraint inventory_ledger_package_same_product foreign key (tenant_id, product_id, package_version_id) references biz.package_version (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.inventory_ledger add constraint inventory_ledger_batch_same_product foreign key (tenant_id, product_id, batch_id) references biz.batch (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.inventory_ledger add constraint inventory_ledger_event_same_scope foreign key (tenant_id, event_id, product_id, location_id) references biz.inventory_event (tenant_id, id, product_id, location_id);  -- @kontrol:PRODUCT_FK
+alter table biz.stock_balance add constraint stock_balance_package_same_product foreign key (tenant_id, product_id, package_version_id) references biz.package_version (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.stock_balance add constraint stock_balance_batch_same_product foreign key (tenant_id, product_id, batch_id) references biz.batch (tenant_id, product_id, id);  -- @kontrol:PRODUCT_FK
+alter table biz.value_ledger add constraint value_ledger_event_same_scope foreign key (tenant_id, event_id, product_id, location_id) references biz.inventory_event (tenant_id, id, product_id, location_id);  -- @kontrol:PRODUCT_FK
 
 -- PRD-05: faktor/bentuk/produk varian yang sudah punya histori stok tidak boleh berubah (lapis kedua
 -- di bawah pemeriksaan fungsi). Varian baru dibuat sebagai versi baru.
@@ -358,31 +372,35 @@ end $$;
 
 -- POST /products: produk + varian + barcode + stok awal + nilai pembukaan dalam SATU transaksi.
 -- p_body sudah divalidasi skema di backend; aturan bisnis & invarian ditegakkan ulang di sini.
-create function app.product_create(p_key uuid, p_hash bytea, p_body jsonb) returns jsonb
+-- (CAT-AUD-03) Identitas permintaan idempoten dihitung DATABASE dari jsonb yang benar-benar diterima:
+-- request_hash = sha256(p_body::text). jsonb menormalkan urutan kunci dan duplikasi kunci, sehingga
+-- isi yang secara semantik sama (urutan kunci berbeda) menghasilkan hash yang sama. Pemanggil tidak
+-- lagi mengirim hash. Normalisasi lain (trim, huruf) dilakukan validasi backend sebelum dikirim.
+create function app.product_create(p_key uuid, p_body jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare
   a record; v_idem record; v_pid uuid; v_loc uuid; v_event uuid; v_tz text; v_today date;
   pk jsonb; ln jsonb; v_pkgs jsonb := '{}'::jsonb; v_pkg uuid; v_factor integer; v_batch uuid;
   v_qty integer; v_base bigint; v_cost bigint; v_basis text; v_exp date; v_bnum text; v_now timestamptz := clock_timestamp();
-  v_resp jsonb; v_lines integer := 0;
+  v_resp jsonb; v_lines integer := 0; v_hash bytea;
 begin
   select * into a from iam.current_actor();
   if a.effective_status <> 'ACTIVE' then                                                   -- @kontrol:LOCK_CATALOG
     raise exception 'TENANT_LOCKED' using errcode = 'P0001';                               -- @kontrol:LOCK_CATALOG
   end if;                                                                                  -- @kontrol:LOCK_CATALOG
-  if p_key is null or p_hash is null or octet_length(p_hash) <> 32 or p_body is null
-     or jsonb_typeof(p_body) <> 'object' then
+  if p_key is null or p_body is null or jsonb_typeof(p_body) <> 'object' then
     raise exception 'VALIDATION' using errcode = 'P0001';
   end if;
+  v_hash := pg_catalog.sha256(pg_catalog.convert_to(p_body::text, 'UTF8'));
 
   -- Idempotensi: baris kunci dibuat dulu; permintaan serentak dengan kunci sama menunggu baris ini.
   insert into biz.idempotency (tenant_id, operation, key, request_hash)
-  values (a.tenant_id, 'product.create', p_key, p_hash)
+  values (a.tenant_id, 'product.create', p_key, v_hash)
   on conflict (tenant_id, operation, key) do nothing;
   if not found then
     select i.* into v_idem from biz.idempotency i
      where i.tenant_id = a.tenant_id and i.operation = 'product.create' and i.key = p_key for update;
-    if v_idem.request_hash <> p_hash then                                                  -- @kontrol:IDEM_HASH
+    if v_idem.request_hash <> v_hash then                                                  -- @kontrol:IDEM_HASH
       raise exception 'IDEMPOTENCY_PAYLOAD_MISMATCH' using errcode = 'P0001';              -- @kontrol:IDEM_HASH
     end if;                                                                                -- @kontrol:IDEM_HASH
     return v_idem.response || '{"replayed": true}'::jsonb;
@@ -703,6 +721,6 @@ end $$;
 reset role;
 
 revoke execute on all functions in schema app from public;
-grant execute on function app.product_create(uuid, bytea, jsonb), app.product_get(uuid), app.product_list(text, integer, integer),
+grant execute on function app.product_create(uuid, jsonb), app.product_get(uuid), app.product_list(text, integer, integer),
   app.product_update(uuid, bigint, jsonb), app.stock_list(uuid), app.inventory_reconcile() to app_runtime;
 -- @mutasi:BIZ_GRANT grant update on biz.stock_balance to app_runtime;
