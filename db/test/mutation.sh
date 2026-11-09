@@ -32,6 +32,9 @@ suites="db,aud,catalog,inv"
 if [[ ",$ids," == *"FEFO-"* ]]; then
   suites="$suites,fefo"
 fi
+if [[ ",$ids," == *"COUNT-"* || ",$ids," == *"ST-INV-09-INV"* ]]; then
+  suites="$suites,count"
+fi
 set +e
 ( cd "$root/backend" && TEST_TARGET=direct TEST_DB_NAME="$db" TEST_SUITES="$suites" TEST_ONLY_IDS="$ids" \
     TEST_RESULTS_DIR="$out" node dist/test/run.js ) > "$out/run.log" 2>&1
