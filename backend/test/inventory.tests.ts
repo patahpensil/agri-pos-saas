@@ -5,9 +5,10 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { TestOtpSender } from "../src/auth/otp-sender";
+import { Client } from "pg";
 import {
-  DBNAME, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, asActor, asRole, eq, errOf, inviteAndActivateAdminSql,
-  makePro, notRun, ok, registerOwnerSql, test,
+  ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, asActor, asRole, eq, errOf, inviteAndActivateAdminSql,
+  PW, makePro, notRun, ok, registerOwnerSql, sleep, test,
 } from "./harness";
 
 const KA = "API";
@@ -26,11 +27,23 @@ async function http(method: string, path: string, token: string | undefined, bod
   return { status: r.status, body: json, text };
 }
 const idem = (key: string = randomUUID()) => ({ "idempotency-key": key });
-const receive = (t: string, b: unknown, key?: string) => http("POST", "/inventory/receipts", t, b, idem(key));
+// Pemasok wajib (INV-01). Helper menambahkan pemasok uji bila body tidak menyebutnya; uji negatif memakai rawReceive.
+const withSupplier = (b: unknown) => (typeof b === "object" && b !== null && !("supplierName" in b) ? { supplierName: "PT Pemasok Uji", ...b } : b);
+const rawReceive = (t: string, b: unknown, key?: string) => http("POST", "/inventory/receipts", t, b, idem(key));
+const receive = (t: string, b: unknown, key?: string) => rawReceive(t, withSupplier(b), key);
+const sqlReceive = (token: string, b: unknown, key: string = randomUUID()) =>
+  asActor(token, "select app.inventory_receive($1, $2::jsonb)", [key, JSON.stringify(withSupplier(b))]);
 const openPkg = (t: string, pkg: string, b: unknown, key?: string) => http("POST", `/packages/${pkg}/open`, t, b, idem(key));
 const move = (t: string, b: unknown, key?: string) => http("POST", "/inventory/status-moves", t, b, idem(key));
 const hold = (t: string, b: unknown, key?: string) => http("POST", "/inventory/holds", t, b, idem(key));
 const release = (t: string, id: string, b: unknown, key?: string) => http("POST", `/inventory/holds/${id}/release`, t, b, idem(key));
+const reauth = (t: string, holdId: string, password = PW) => http("POST", "/auth/reauth", t, { password, action: "inventory.release", targetId: holdId });
+// Pelepasan sah oleh Owner: reautentikasi sandi untuk penahanan ini, lalu lepas dengan token sekali pakai.
+async function ownerRelease(t: string, holdId: string, reason: string): Promise<Res> {
+  const g = await reauth(t, holdId);
+  if (g.status !== 201) throw new Error(`reauth gagal: ${g.text}`);
+  return release(t, holdId, { reason, reauthToken: g.body.reauthToken });
+}
 
 let seq = 0;
 const sku = (p = "INV") => `${p}-${Date.now().toString(36)}-${(seq++).toString(36)}`.toUpperCase().slice(0, 40);
@@ -152,7 +165,7 @@ export async function inventoryTests(): Promise<void> {
       const pl = await pools(p.id);
       eq(pl.SALEABLE.q, 41 + 7, "stok bertambah sekali");
       // Panggilan database langsung dengan kunci sama & isi beda juga ditolak (hash dihitung database).
-      const e = await errOf(asActor(A.token, "select app.inventory_receive($1, $2::jsonb)", [key, JSON.stringify({ productId: p.id, lines: [line(p.pkg.botol, 9)] })]));
+      const e = await errOf(sqlReceive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 9)] }, key));
       eq(e, "IDEMPOTENCY_PAYLOAD_MISMATCH", "database langsung");
       return "ulang + 10 serentak + urutan kunci beda -> event sama; isi beda -> 409 (API & DB); 1 event, stok +7 sekali";
     });
@@ -185,7 +198,7 @@ export async function inventoryTests(): Promise<void> {
         ["KNOWN Rp0", await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { cost: { basis: "KNOWN", totalIdr: 0 } })] }), 400, "COST_BASIS_INVALID"],
         ["UNVERIFIED + nilai", await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { cost: { basis: "UNVERIFIED", totalIdr: 9 } })] }), 400, "COST_BASIS_INVALID"],
         ["BONUS tanpa asal", await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { cost: { basis: "BONUS_ZERO", reason: "promo" } })] }), 400, "COST_BASIS_INVALID"],
-        ["tanpa Idempotency-Key", await http("POST", "/inventory/receipts", A.token, { productId: p.id, lines: [line(p.pkg.botol, 1)] }), 400, "IDEMPOTENCY_KEY_REQUIRED"],
+        ["tanpa Idempotency-Key", await http("POST", "/inventory/receipts", A.token, { productId: p.id, supplierName: "PT X", lines: [line(p.pkg.botol, 1)] }), 400, "IDEMPOTENCY_KEY_REQUIRED"],
       ] as const;
       const bad = res.filter(([, r, s, c]) => r.status !== s || r.body.code !== c).map(([n, r]) => `${n}: ${r.status} ${String(r.body.code)}`);
       ok(bad.length === 0, bad.join("; "));
@@ -219,7 +232,7 @@ export async function inventoryTests(): Promise<void> {
       const body = { productId: sub.id, lines: [{ packageId: sub.pkg.sak, qty: 10, status: "SALEABLE", cost: { basis: "KNOWN", totalIdr: 1_125_000 } }] };
       const r1 = await receive(A.token, body);
       const r2 = await receive(ADM.token, { ...body, lines: [{ ...body.lines[0], status: "QUARANTINE" }] });
-      const e3 = await errOf(asActor(A.token, "select app.inventory_receive($1, $2::jsonb)", [randomUUID(), JSON.stringify(body)]));
+      const e3 = await errOf(sqlReceive(A.token, body));
       ok(r1.status === 409 && r1.body.code === "SUBSIDY_RECEIPT_SEPARATE", `Owner: ${r1.status} ${String(r1.body.code)}`);
       ok(r2.status === 409 && r2.body.code === "SUBSIDY_RECEIPT_SEPARATE", `Admin/karantina: ${r2.status} ${String(r2.body.code)}`);
       eq(e3, "SUBSIDY_RECEIPT_SEPARATE", "fungsi database langsung");
@@ -348,11 +361,11 @@ export async function inventoryTests(): Promise<void> {
       eq(admDb, "FORBIDDEN_ROLE", "admin lepas (database langsung)");
       rs = await rows(A.token, p.id);
       eq(baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE"), 0, "masih 0 setelah percobaan admin");
-      const rel = await release(A.token, holdId, { reason: "Diperiksa, aman" });
+      const rel = await ownerRelease(A.token, holdId, "Diperiksa, aman");
       eq(rel.status, 200, rel.text);
       rs = await rows(A.token, p.id);
       ok(baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE") === 41 && baseOf(rs, "HELD") === 0, JSON.stringify(rs.map((x) => [x.status, x.qtyBase])));
-      const again = await release(A.token, holdId, { reason: "lagi" });
+      const again = await ownerRelease(A.token, holdId, "lagi");
       ok(again.status === 409 && again.body.code === "HOLD_NOT_ACTIVE", `lepas ulang: ${again.status}`);
       const [hh] = await admin<{ rb: string }>("select released_by::text rb from biz.stock_hold where id=$1", [holdId]);
       const [ow] = await admin<{ u: string }>("select user_id::text u from iam.membership where tenant_id=$1 and role='OWNER'", [A.tenant]);
@@ -363,35 +376,41 @@ export async function inventoryTests(): Promise<void> {
 
     await test("INV-HOLD-02", KA, "Pelepasan tidak membuka stok yang kedaluwarsa atau masih dicakup penahanan lain (dilaporkan, tidak dibuang diam-diam)", async () => {
       const p = await pesticide(A.token);
-      const r = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 10, { batch: { number: "B-X", expiresOn: "2032-01-01" } })] });
+      const r = await receive(A.token, { productId: p.id, lines: [
+        line(p.pkg.botol, 10, { batch: { number: "B-X", expiresOn: "2032-01-01" } }),
+        line(p.pkg.botol, 2, { status: "QUARANTINE", batch: { number: "B-OLD", expiresOn: "2020-01-01" } })] });
       eq(r.status, 201, r.text);
       const b1 = await batchId(p.id, "B-01");
       const bx = await batchId(p.id, "B-X");
+      const bo = await batchId(p.id, "B-OLD");
+      // Barang kedaluwarsa dipindah Owner ke HELD (bukan siap jual) agar tercakup pelepasan.
+      const mv = await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: bo, from: "QUARANTINE", to: "HELD", qty: 2, reason: "tahan untuk retur" });
+      eq(mv.status, 201, mv.text);
       const hb = await hold(A.token, { productId: p.id, batchId: b1, reason: "batch dicurigai" });
       const hp = await hold(ADM.token, { productId: p.id, reason: "penarikan produk" });
       ok(hb.status === 201 && hp.status === 201, `${hb.text} ${hp.text}`);
       const blocked = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { batch: { number: "B-BARU", expiresOn: "2033-01-01" } })] });
       ok(blocked.status === 409 && blocked.body.code === "HOLD_ACTIVE", `tahan produk memblokir batch baru: ${blocked.status}`);
-      const relB = await release(A.token, hb.body.holdId as string, { reason: "batch aman" });
+      const relB = await ownerRelease(A.token, hb.body.holdId as string, "batch aman");
       eq(relB.status, 200, relB.text);
       const nr = relB.body.notReleased as { reason: string }[];
       ok(Number(relB.body.releasedQtyBase) === 0 && nr.length > 0 && nr.every((x) => x.reason === "OTHER_HOLD_ACTIVE"), `lepas batch: ${relB.text}`);
       let rs = await rows(A.token, p.id);
       eq(baseOf(rs, "SALEABLE"), 0, "masih tertahan oleh penahanan produk");
-      await admin("update biz.batch set expires_on = date '2021-01-01' where id=$1", [b1]);
-      const relP = await release(A.token, hp.body.holdId as string, { reason: "penarikan dibatalkan" });
+      const relP = await ownerRelease(A.token, hp.body.holdId as string, "penarikan dibatalkan");
       eq(relP.status, 200, relP.text);
       rs = await rows(A.token, p.id);
       const nr2 = relP.body.notReleased as { reason: string; batchId: string }[];
-      ok(baseOf(rs.filter((x) => x.batchId === bx), "SALEABLE") === 10, `batch B-X kembali: ${JSON.stringify(rs)}`);
-      ok(baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE") === 0 && nr2.some((x) => x.reason === "BATCH_EXPIRED" && x.batchId === b1), `B-01 kedaluwarsa tetap ditahan: ${relP.text}`);
-      eq(baseOf(rs.filter((x) => x.batchId === b1), "HELD"), 41, "B-01 tetap HELD");
+      ok(baseOf(rs.filter((x) => x.batchId === bx), "SALEABLE") === 10 && baseOf(rs.filter((x) => x.batchId === b1), "SALEABLE") === 41,
+         `B-X & B-01 kembali: ${JSON.stringify(rs)}`);
+      ok(baseOf(rs.filter((x) => x.batchId === bo), "SALEABLE") === 0 && nr2.some((x) => x.reason === "BATCH_EXPIRED" && x.batchId === bo), `B-OLD kedaluwarsa tetap ditahan: ${relP.text}`);
+      eq(baseOf(rs.filter((x) => x.batchId === bo), "HELD"), 2, "B-OLD tetap HELD");
       // Setelah semua penahanan dilepas, stok tidak kedaluwarsa tidak boleh tertinggal di HELD ("yatim").
       const [orphan] = await admin<{ n: number }>(
         `select coalesce(sum(b.qty),0)::int n from biz.stock_balance b join biz.batch bt on bt.id=b.batch_id
           where b.product_id=$1 and b.status='HELD' and (bt.expires_on is null or bt.expires_on >= current_date)`, [p.id]);
       eq(orphan.n, 0, "stok layak yang tertinggal ditahan");
-      return "lepas batch saat tahan produk aktif -> 0 dilepas (OTHER_HOLD_ACTIVE); lepas produk -> B-X 10 kembali, B-01 kedaluwarsa tetap HELD (BATCH_EXPIRED); 0 stok layak tertinggal";
+      return "lepas batch saat tahan produk aktif -> 0 dilepas (OTHER_HOLD_ACTIVE); lepas produk -> B-01 41 & B-X 10 kembali, B-OLD kedaluwarsa tetap HELD (BATCH_EXPIRED); 0 stok layak tertinggal";
     });
 
     await test("INV-HOLD-03", KD, "Tahan vs penerimaan siap jual serentak (10 putaran): saat penahanan aktif, stok siap jual dalam cakupan selalu 0", async () => {
@@ -401,7 +420,7 @@ export async function inventoryTests(): Promise<void> {
         const b1 = await batchId(p.id, "B-01");
         const [h, rcv] = await Promise.all([
           errOf(asActor(ADM.token, "select app.stock_hold($1, $2::jsonb)", [randomUUID(), JSON.stringify({ productId: p.id, batchId: b1, reason: "uji balapan" })])),
-          errOf(asActor(A.token, "select app.inventory_receive($1, $2::jsonb)", [randomUUID(), JSON.stringify({ productId: p.id, lines: [line(p.pkg.botol, 2)] })])),
+          errOf(sqlReceive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 2)] })),
         ]);
         if (h !== "OK" || !(rcv === "OK" || rcv === "HOLD_ACTIVE")) viol.push(`putaran ${i}: tahan=${h} terima=${rcv}`);
         const [s] = await admin<{ q: number }>(
@@ -469,6 +488,179 @@ export async function inventoryTests(): Promise<void> {
       const pl = await pools(p.id);
       ok(pl.DAMAGED.q === 2 && pl.DAMAGED.u === true, `label pindah: ${JSON.stringify(pl)}`);
       return "Admin 403 (API & DB); asal=tujuan 400; melebihi 409; varian lain 400; Owner pindah 2 -> kolam rusak tetap UNVERIFIED";
+    });
+
+    // ------------------------------------------------------------------ perbaikan audit PR #7
+    await test("INV-AUD-01-API", KA, "Pelepasan penahanan wajib reautentikasi Owner: tanpa/palsu/kedaluwarsa/salah objek ditolak; Admin tidak bisa; reautentikasi sah diterima", async () => {
+      const p = await pesticide(A.token);
+      const b1 = await batchId(p.id, "B-01");
+      const h1 = await hold(ADM.token, { productId: p.id, batchId: b1, reason: "cek" });
+      const p2 = await pesticide(A.token);
+      const h2 = await hold(ADM.token, { productId: p2.id, reason: "cek 2" });
+      const id1 = h1.body.holdId as string;
+      const id2 = h2.body.holdId as string;
+      const none = await release(A.token, id1, { reason: "tanpa reauth" });
+      const forged = await release(A.token, id1, { reason: "palsu", reauthToken: "ab".repeat(32) });
+      const admReauth = await reauth(ADM.token, id1);
+      const wrongPw = await reauth(A.token, id1, "sandi-salah-sekali");
+      const g2 = await reauth(A.token, id2);
+      const otherTarget = await release(A.token, id1, { reason: "token objek lain", reauthToken: g2.body.reauthToken });
+      const gExp = await reauth(A.token, id1);
+      await sleep(5_600);   // reauth_ttl_seconds uji = 5 (TEST_ONLY)
+      const expired = await release(A.token, id1, { reason: "kedaluwarsa", reauthToken: gExp.body.reauthToken });
+      const g1 = await reauth(A.token, id1);
+      const admUse = await release(ADM.token, id1, { reason: "admin pakai token owner", reauthToken: g1.body.reauthToken });
+      const bad = [["tanpa token", none], ["token palsu", forged], ["token objek lain", otherTarget], ["kedaluwarsa", expired]]
+        .filter(([, r]) => (r as Res).status !== 403 || (r as Res).body.code !== "REAUTH_REQUIRED").map(([n, r]) => `${String(n)}: ${(r as Res).status} ${String((r as Res).body.code)}`);
+      ok(bad.length === 0, bad.join("; "));
+      ok(admReauth.status === 403 && admReauth.body.code === "FORBIDDEN_ROLE", `admin reauth: ${admReauth.status} ${String(admReauth.body.code)}`);
+      ok(wrongPw.status === 401 && wrongPw.body.code === "REAUTH_INVALID" && wrongPw.body.reauthToken === undefined, `sandi salah: ${wrongPw.status}`);
+      ok(admUse.status === 403 && admUse.body.code === "FORBIDDEN_ROLE", `admin pakai token owner: ${admUse.status}`);
+      let rs = await rows(A.token, p.id);
+      eq(baseOf(rs, "SALEABLE"), 0, "stok tetap ditahan setelah percobaan tidak sah");
+      const okRel = await release(A.token, id1, { reason: "diperiksa", reauthToken: g1.body.reauthToken });
+      eq(okRel.status, 200, okRel.text);
+      rs = await rows(A.token, p.id);
+      eq(baseOf(rs, "SALEABLE"), 41, "dilepas setelah reautentikasi");
+      const [aud] = await admin<{ n: number }>("select count(*)::int n from iam.auth_event where tenant_id=$1 and kind='REAUTH_FAILED'", [A.tenant]);
+      ok(aud.n >= 1, "kegagalan reautentikasi diaudit");
+      return "tanpa/palsu/objek lain/kedaluwarsa -> 403 REAUTH_REQUIRED; Admin reauth & pakai token Owner -> 403; sandi salah 401 tanpa token; reauth sah -> 200, stok kembali 41";
+    });
+
+    await test("INV-AUD-01-DB", KD, "Bukti reautentikasi: dicek database, hanya hash disimpan, sekali pakai, terikat sesi, runtime tak bisa baca/memalsukan, percobaan sandi dibatasi", async () => {
+      const O = await registerOwnerSql("Kios Reauth");
+      const p = await pesticide(O.token);
+      const h = (await asActor<{ r: { holdId: string } }>(O.token, "select app.stock_hold($1, $2::jsonb) r", [randomUUID(), JSON.stringify({ productId: p.id, reason: "uji db" })]))[0].r.holdId;
+      const relSql = (tok: string | undefined, token = O.token) =>
+        errOf(asActor(token, "select app.stock_release($1, $2, $3::jsonb)", [randomUUID(), h, JSON.stringify(tok ? { reason: "x", reauthToken: tok } : { reason: "x" })]));
+      eq(await relSql(undefined), "REAUTH_REQUIRED", "fungsi DB tanpa token");
+      const [g] = await asActor<{ r: { status: string; reauthToken: string } }>(O.token, "select app.reauth_start($1,'inventory.release',$2) r", [PW, h]);
+      eq(g.r.status, "OK", "reauth_start");
+      const tok = g.r.reauthToken;
+      const [row] = await admin<{ n: number; used: boolean }>(
+        "select count(*)::int n, bool_or(used_at is not null) used from iam.reauth_grant where token_hash = sha256(decode($1,'hex'))", [tok]);
+      ok(row.n === 1 && row.used === false, JSON.stringify(row));
+      const [plain] = await admin<{ n: number }>("select count(*)::int n from iam.reauth_grant g where g::text like '%'||$1||'%'", [tok]);
+      eq(plain.n, 0, "token mentah tersimpan");
+      // Runtime tidak bisa membaca tabel bukti atau memanggil fungsi konsumsi langsung.
+      const e1 = await errOf(asRole("app_runtime", "select 1 from iam.reauth_grant"));
+      const [fx] = await admin<{ c: boolean; t: boolean }>(
+        "select has_function_privilege('app_runtime','iam.reauth_consume(text,text,uuid)','EXECUTE') c, has_table_privilege('app_runtime','iam.reauth_grant','INSERT') t");
+      ok(e1.startsWith("42501") && !fx.c && !fx.t, `${e1} ${JSON.stringify(fx)}`);
+      eq(await relSql(tok), "OK", "pemakaian pertama");
+      eq(await relSql(tok), "REAUTH_REQUIRED", "pemakaian ulang");
+      const e2 = await errOf(admin("update iam.reauth_grant set used_at = null where token_hash = sha256(decode($1,'hex'))", [tok]));
+      eq(e2, "APPEND_ONLY", "superuser mengosongkan used_at");
+      // Terikat sesi: token dari sesi lama tidak berlaku di sesi baru.
+      const h2 = (await asActor<{ r: { holdId: string } }>(O.token, "select app.stock_hold($1, $2::jsonb) r", [randomUUID(), JSON.stringify({ productId: p.id, reason: "uji sesi" })]))[0].r.holdId;
+      const [g2] = await asActor<{ r: { reauthToken: string } }>(O.token, "select app.reauth_start($1,'inventory.release',$2) r", [PW, h2]);
+      const [l] = await asRole<{ r_status: string; r_token: string }>("auth_runtime", "select * from iam.login($1,$2,$3)", [O.phone, PW, "dev-sesi-baru-123"]);
+      eq(l.r_status, "OK", "login sesi baru");
+      const e3 = await errOf(asActor(l.r_token, "select app.stock_release($1, $2, $3::jsonb)", [randomUUID(), h2, JSON.stringify({ reason: "x", reauthToken: g2.r.reauthToken })]));
+      eq(e3, "REAUTH_REQUIRED", "token sesi lain");
+      // Batas percobaan sandi (memakai parameter login_max_failures yang sudah ada; uji = 5).
+      const R = await registerOwnerSql("Kios Reauth Limit");
+      const out: string[] = [];
+      for (let i = 0; i < 6; i++) out.push((await asActor<{ r: { status: string } }>(R.token, "select app.reauth_start($1,'inventory.release',gen_random_uuid()) r", ["salah-" + i]))[0].r.status);
+      const last = (await asActor<{ r: { status: string } }>(R.token, "select app.reauth_start($1,'inventory.release',gen_random_uuid()) r", [PW]))[0].r.status;
+      ok(out.slice(0, 5).every((x) => x === "INVALID_CREDENTIALS") && out[5] === "RATE_LIMITED" && last === "RATE_LIMITED", `${out.join(",")} | sandi benar: ${last}`);
+      return "tanpa token -> REAUTH_REQUIRED (DB); hanya hash; runtime 42501; pakai ulang ditolak; used_at tak bisa dikosongkan; token sesi lain ditolak; 5 salah -> dibatasi (sandi benar pun)";
+    });
+
+    await test("INV-AUD-02-API", KA, "Penerimaan tanpa pemasok (kosong/spasi) ditolak API; dengan pemasok diterima dan tersimpan apa adanya", async () => {
+      const p = await pesticide(A.token);
+      const before = await ledgerCount(p.id);
+      const r1 = await rawReceive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1)] });
+      const r2 = await rawReceive(A.token, { productId: p.id, supplierName: "   ", lines: [line(p.pkg.botol, 1)] });
+      ok(r1.status === 400 && (r1.body.fields as string[]).includes("supplierName"), `tanpa pemasok: ${r1.text}`);
+      ok(r2.status === 400 && (r2.body.fields as string[]).includes("supplierName"), `spasi: ${r2.text}`);
+      eq(await ledgerCount(p.id), before, "ledger tidak bertambah");
+      const r3 = await rawReceive(A.token, { productId: p.id, supplierName: "  CV Tani Makmur ", lines: [line(p.pkg.botol, 1)] });
+      eq(r3.status, 201, r3.text);
+      const [x] = await admin<{ s: string }>("select supplier_name s from biz.stock_receipt where event_id=$1", [r3.body.eventId]);
+      eq(x.s, "CV Tani Makmur", "pemasok tersimpan (dirapikan spasi)");
+      return "tanpa pemasok & spasi -> 400 (field supplierName); ledger tetap; dengan pemasok -> 201";
+    });
+
+    await test("INV-AUD-02-DB", KD, "Pemasok wajib juga di database: fungsi SQL langsung & insert langsung tanpa pemasok ditolak; tidak ada pemasok fiktif", async () => {
+      const p = await pesticide(A.token);
+      const before = await ledgerCount(p.id);
+      const raw = (b: unknown) => errOf(asActor(A.token, "select app.inventory_receive($1, $2::jsonb)", [randomUUID(), JSON.stringify(b)]));
+      const e1 = await raw({ productId: p.id, lines: [line(p.pkg.botol, 1)] });
+      const e2 = await raw({ productId: p.id, supplierName: "  ", lines: [line(p.pkg.botol, 1)] });
+      const e3 = await raw({ productId: p.id, supplierName: null, lines: [line(p.pkg.botol, 1)] });
+      ok(e1 === "SUPPLIER_REQUIRED" && e2 === "SUPPLIER_REQUIRED" && e3 === "SUPPLIER_REQUIRED", `${e1} | ${e2} | ${e3}`);
+      eq(await ledgerCount(p.id), before, "ledger tidak bertambah");
+      const c = new Client({ host: ADMIN_HOST, port: ADMIN_PORT, user: ADMIN_USER, database: DBNAME });
+      await c.connect();
+      const out: string[] = [];
+      try {
+        for (const sup of [null, "", "   "]) {
+          await c.query("begin");
+          try {
+            const [ev] = (await c.query<{ id: string; loc: string; u: string }>(
+              `insert into biz.inventory_event (tenant_id, kind, product_id, location_id, actor_user_id)
+               select tenant_id, 'RECEIPT', id, (select id from platform.location where tenant_id=p.tenant_id limit 1), created_by from biz.product p where id=$1
+               returning id::text, location_id::text loc, actor_user_id::text u`, [p.id])).rows;
+            out.push(await errOf(c.query("insert into biz.stock_receipt (tenant_id, event_id, product_id, location_id, supplier_name) values ($1,$2,$3,$4,$5)",
+              [A.tenant, ev.id, p.id, ev.loc, sup])));
+          } finally {
+            await c.query("rollback");
+          }
+        }
+      } finally {
+        await c.end();
+      }
+      ok(out.every((e) => e.startsWith("23514")), out.join(" | "));
+      const [fake] = await admin<{ n: number }>("select count(*)::int n from biz.stock_receipt where supplier_name is null or btrim(supplier_name) = ''");
+      eq(fake.n, 0, "header penerimaan tanpa pemasok");
+      return "fungsi DB: tanpa/spasi/null -> SUPPLIER_REQUIRED; insert langsung superuser null/''/spasi -> 23514; 0 header tanpa pemasok";
+    });
+
+    await test("INV-AUD-03-API", KA, "Nomor batch yang sama tidak bisa dipakai dengan expiry berbeda/kosong untuk menyamarkan batch lama", async () => {
+      const p = await pesticide(A.token);
+      const old = { number: "B-001", expiresOn: "2020-01-01" };
+      const r0 = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 2, { status: "QUARANTINE", batch: old })] });
+      eq(r0.status, 201, r0.text);
+      const r1 = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 5, { batch: { number: "B-001", expiresOn: "2031-01-01" } })] });
+      const r2 = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 5, { batch: { number: "B-001" } })] });
+      const r3 = await receive(ADM.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { status: "DAMAGED", batch: { number: "B-001", expiresOn: "2020-01-02" } })] });
+      ok([r1, r2, r3].every((r) => r.status === 409 && r.body.code === "BATCH_EXPIRY_MISMATCH"), [r1, r2, r3].map((r) => `${r.status}:${String(r.body.code)}`).join(","));
+      const same = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { status: "DAMAGED", batch: old })] });
+      eq(same.status, 201, `expiry sama tetap boleh: ${same.text}`);
+      const [b] = await admin<{ n: number; e: string }>("select count(*)::int n, max(expires_on)::text e from biz.batch where product_id=$1 and batch_number='B-001'", [p.id]);
+      ok(b.n === 1 && b.e === "2020-01-01", `batch B-001: ${JSON.stringify(b)}`);
+      const rs = await rows(A.token, p.id);
+      eq(baseOf(rs.filter((x) => x.batchNumber === "B-001"), "SALEABLE"), 0, "tidak ada stok siap jual B-001");
+      const pc = await http("POST", "/products", A.token, {
+        sku: sku("BID"), name: "Batch ganda", category: "PESTICIDE", subsidized: false, baseUnit: "botol",
+        packages: [{ key: "botol", form: "LOOSE", factor: 1, label: "Botol" }],
+        opening: [
+          { packageKey: "botol", qty: 1, batch: { number: "Z-1", expiresOn: "2030-01-01" }, cost: { basis: "KNOWN", totalIdr: 100 } },
+          { packageKey: "botol", qty: 1, batch: { number: "Z-1", expiresOn: "2031-01-01" }, cost: { basis: "KNOWN", totalIdr: 100 } },
+        ],
+      }, idem());
+      ok(pc.status === 409 && pc.body.code === "BATCH_EXPIRY_MISMATCH", `stok awal: ${pc.status} ${String(pc.body.code)}`);
+      const pB = await pesticide(B.token);
+      const rb = await receive(B.token, { productId: pB.id, lines: [line(pB.pkg.botol, 1, { batch: { number: "B-001", expiresOn: "2031-01-01" } })] });
+      eq(rb.status, 201, `toko B nomor sama: ${rb.text}`);
+      return "B-001 (exp 2020-01-01) lalu exp 2031/kosong/2020-01-02 -> 409 BATCH_EXPIRY_MISMATCH; expiry sama -> 201 batch sama; stok awal ganda 409; toko B tidak terpengaruh";
+    });
+
+    await test("INV-AUD-03-DB", KD, "Database menolak batch bernomor sama dengan expiry berbeda dan perubahan expiry historis (termasuk superuser)", async () => {
+      const p = await pesticide(A.token);
+      const e0 = await errOf(sqlReceive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 1, { batch: { number: "B-01", expiresOn: "2031-12-31" } })] }));
+      eq(e0, "BATCH_EXPIRY_MISMATCH", "fungsi DB langsung");
+      const e1 = await errOf(admin("insert into biz.batch (tenant_id, product_id, batch_number, expires_on) select tenant_id, id, 'B-01', date '2029-01-01' from biz.product where id=$1", [p.id]));
+      const e2 = await errOf(admin("insert into biz.batch (tenant_id, product_id, batch_number, expires_on) select tenant_id, id, 'B-01', null from biz.product where id=$1", [p.id]));
+      const e3 = await errOf(admin("update biz.batch set expires_on = date '2035-01-01' where product_id=$1 and batch_number='B-01'", [p.id]));
+      const e4 = await errOf(admin("update biz.batch set batch_number = 'B-02' where product_id=$1 and batch_number='B-01'", [p.id]));
+      ok(e1 === "BATCH_EXPIRY_MISMATCH" && e2 === "BATCH_EXPIRY_MISMATCH" && e3 === "IMMUTABLE_FIELD" && e4 === "IMMUTABLE_FIELD", `${e1} | ${e2} | ${e3} | ${e4}`);
+      const [b] = await admin<{ e: string; n: number }>("select max(expires_on)::text e, count(*)::int n from biz.batch where product_id=$1 and batch_number='B-01'", [p.id]);
+      ok(b.e === "2030-12-31" && b.n === 1, JSON.stringify(b));
+      const [ix] = await admin<{ n: number }>("select count(*)::int n from pg_indexes where schemaname='biz' and indexname='batch_number_one_expiry'");
+      eq(ix.n, 1, "indeks unik nomor batch");
+      return "fungsi DB & insert superuser (expiry beda/kosong) -> BATCH_EXPIRY_MISMATCH; ubah expiry/nomor -> IMMUTABLE_FIELD; expiry asli 2030-12-31 utuh; indeks unik ada";
     });
 
     // ------------------------------------------------------------------ isolasi, atomik, append-only, hak
@@ -541,7 +733,7 @@ export async function inventoryTests(): Promise<void> {
         ok(e === "APPEND_ONLY", `${sql}: ${e}`);
         out.push(e);
       }
-      const rel = await release(A.token, h.body.holdId as string, { reason: "aman" });
+      const rel = await ownerRelease(A.token, h.body.holdId as string, "aman");
       eq(rel.status, 200, rel.text);
       const e2 = await errOf(admin("update biz.stock_hold set release_reason='PALSU' where id=$1", [h.body.holdId]));
       const e3 = await errOf(admin("update biz.stock_hold set released_at=null, released_by=null, release_reason=null, release_event_id=null where id=$1", [h.body.holdId]));

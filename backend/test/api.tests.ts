@@ -333,8 +333,9 @@ export async function apiTests(): Promise<void> {
       eq(r2.status, 404, "path injeksi");
       eq(r3.status, 202, "nama berisi kutip");
       ok((list.body.staff as { displayName: string }[]).some((s) => s.displayName === name), "nama tersimpan literal");
-      eq(tables, 12, "tabel utuh");
-      return "phone -> 400; path -> 404; nama berkutip tersimpan literal; 12 tabel utuh";
+      // 12 tabel fondasi + iam.reauth_grant (0009, INV-AUD-01).
+      eq(tables, 13, "tabel utuh");
+      return "phone -> 400; path -> 404; nama berkutip tersimpan literal; 13 tabel utuh";
     });
 
     await test("T-SEC-02", K, "Error tidak membocorkan SQL, nama tabel, stack, atau kode internal", async () => {

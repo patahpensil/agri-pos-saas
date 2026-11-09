@@ -166,7 +166,7 @@ export const schemas = {
     .object({
       productId: uuid,
       locationId: uuid.optional(),
-      supplierName: z.string().trim().min(1).max(120).optional(),
+      supplierName: z.string().trim().min(1).max(120),
       sourceDocument: z.string().trim().min(1).max(80).optional(),
       lines: z.array(receiptLine).min(1).max(100),
     })
@@ -194,7 +194,9 @@ export const schemas = {
     })
     .strict(),
   stockHold: z.object({ productId: uuid, batchId: uuid.optional(), locationId: uuid.optional(), reason }).strict(),
-  holdRelease: z.object({ reason }).strict(),
+  holdRelease: z.object({ reason, reauthToken: z.string().regex(/^[0-9a-f]{64}$/).optional() }).strict(),
+  // Reautentikasi Owner untuk satu aksi sensitif pada satu objek (AUTH-04).
+  reauth: z.object({ password, action: z.enum(["inventory.release"]), targetId: uuid }).strict(),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 

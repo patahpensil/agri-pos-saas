@@ -157,6 +157,11 @@ jobs:
           bash db/test/mutation.sh OWNER_MOVE INV-MOVE-01 || rc=1
           bash db/test/mutation.sh MOVE_VALUE ST-COST-06 || rc=1
           bash db/test/mutation.sh SUBSIDY_SPLIT INV-SUB-01 || rc=1
+          bash db/test/mutation.sh REAUTH_RELEASE INV-AUD-01-API,INV-AUD-01-DB || rc=1
+          bash db/test/mutation.sh REAUTH_EXPIRY INV-AUD-01-API || rc=1
+          bash db/test/mutation.sh REAUTH_SINGLE_USE INV-AUD-01-DB || rc=1
+          bash db/test/mutation.sh SUPPLIER_REQUIRED INV-AUD-02-DB || rc=1
+          bash db/test/mutation.sh BATCH_IDENTITY INV-AUD-03-API,INV-AUD-03-DB || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

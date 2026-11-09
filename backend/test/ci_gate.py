@@ -29,8 +29,10 @@ COMMON = (
     # Modul inventori: penerimaan, buka karton, tahan/lepas, pindah status (0009)
     + [(i, API) for i in ("INV-REC-01", "ST-INV-05", "INV-REC-02", "INV-REC-03", "INV-REC-04", "ST-INV-02", "ST-INV-03",
                           "ST-INV-08", "ST-INV-12", "ST-INV-07-INV", "INV-HOLD-02", "ST-COST-06", "ST-COST-03", "INV-MOVE-01",
-                          "INV-TENANT-01", "INV-LOCK-01", "INV-RECON-01", "INV-SUB-01")]
-    + [(i, DB) for i in ("INV-OPEN-01", "INV-HOLD-03", "INV-ATOM-01", "INV-APPEND-01", "INV-PRIV-01")]
+                          "INV-TENANT-01", "INV-LOCK-01", "INV-RECON-01", "INV-SUB-01",
+                          "INV-AUD-01-API", "INV-AUD-02-API", "INV-AUD-03-API")]
+    + [(i, DB) for i in ("INV-OPEN-01", "INV-HOLD-03", "INV-ATOM-01", "INV-APPEND-01", "INV-PRIV-01",
+                          "INV-AUD-01-DB", "INV-AUD-02-DB", "INV-AUD-03-DB")]
 )
 # Uji mutasi (database terpisah, target langsung): kontrol dihapus -> ID ini WAJIB FAIL.
 MUTATIONS = {
@@ -58,6 +60,11 @@ MUTATIONS = {
     "owner_move": ["INV-MOVE-01"],
     "move_value": ["ST-COST-06"],
     "subsidy_split": ["INV-SUB-01"],
+    "reauth_release": ["INV-AUD-01-API", "INV-AUD-01-DB"],
+    "reauth_expiry": ["INV-AUD-01-API"],
+    "reauth_single_use": ["INV-AUD-01-DB"],
+    "supplier_required": ["INV-AUD-02-DB"],
+    "batch_identity": ["INV-AUD-03-API", "INV-AUD-03-DB"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),

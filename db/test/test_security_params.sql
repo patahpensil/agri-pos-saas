@@ -16,5 +16,6 @@ insert into iam.security_param (key, value, test_only) values
   ('bcrypt_cost',                   10, true),
   ('invite_ttl_seconds',           600, true),
   ('otp_dispatch_lease_seconds',     2, true),
-  ('otp_dispatch_max_attempts',      3, true)
+  ('otp_dispatch_max_attempts',      3, true),
+  ('reauth_ttl_seconds',             5, true)
 on conflict (key) do update set value = excluded.value, test_only = true, set_at = now();

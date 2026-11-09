@@ -20,7 +20,7 @@ const TABLES = [
   "biz.product", "biz.package_version", "biz.barcode", "biz.batch", "biz.inventory_event", "biz.inventory_ledger",
   "biz.stock_balance", "biz.cost_pool", "biz.value_ledger", "biz.idempotency", "biz.audit_event", "biz.inventory_alert",
   // Modul inventori (0009)
-  "biz.stock_receipt", "biz.stock_hold",
+  "biz.stock_receipt", "biz.stock_hold", "iam.reauth_grant",
 ];
 
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.
@@ -31,7 +31,7 @@ const ALLOW: Record<string, string[]> = {
   ],
   app_runtime: [
     "app.hold_list", "app.inventory_receive", "app.inventory_reconcile", "app.logout", "app.package_open", "app.product_create",
-    "app.product_get", "app.product_list", "app.product_update", "app.session_list", "app.session_revoke", "app.staff_deactivate",
+    "app.product_get", "app.product_list", "app.product_update", "app.reauth_start", "app.session_list", "app.session_revoke", "app.staff_deactivate",
     "app.staff_invite", "app.staff_list", "app.stock_hold", "app.stock_list", "app.stock_move", "app.stock_release", "app.tenant_me",
   ],
   otp_dispatch_runtime: ["iam.otp_dispatch_ack", "iam.otp_dispatch_claim", "iam.otp_dispatch_fail", "iam.otp_dispatch_set_code"],
