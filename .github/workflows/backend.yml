@@ -166,6 +166,7 @@ jobs:
           bash db/test/mutation.sh MOVE_TRANSITION INV-AUD-04-K || rc=1
           bash db/test/mutation.sh HOLD_ORIGIN INV-HOLD-ORIGIN,INV-HOLD-ORIGIN-03 || rc=1
           bash db/test/mutation.sh HOLD_ATTRIBUTION INV-HOLD-ORIGIN-02 || rc=1
+          bash db/test/mutation.sh OTP_BACKOFF OTP-RETRY-01 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

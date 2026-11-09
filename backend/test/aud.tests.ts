@@ -7,7 +7,7 @@ import { setLogSink } from "../src/common/log";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY,
   admin, asActor, asRole, claimCode, eq, errOf, inviteAndActivateAdminSql, mac, makePro, newDevice, newPhone, ok,
-  regVerify, registerOwnerSql, rolePool, sleep, test,
+  regVerify, registerOwnerSql, rolePool, sleep, test, waitFor,
 } from "./harness";
 
 const K = "integrasi DB";
@@ -28,6 +28,17 @@ async function outboxOf(phone: string) {
   return admin<{ status: string; send_attempts: number }>(
     "select status, send_attempts from iam.otp_outbox where phone_e164=$1 order by created_at desc limit 1", [phone],
   );
+}
+
+// Issue #5: uji batas laju tidak boleh melintasi pergantian jendela waktu di tengah jalan. Bila sisa jendela
+// login (login_window_seconds) kurang dari `needS` detik, tunggu sampai jendela baru dimulai (syarat awal
+// deterministik, bukan tidur sembarang).
+async function ensureWindowMargin(needS = 30): Promise<number> {
+  const [w] = await admin<{ left: number }>(
+    `select (ceil(extract(epoch from clock_timestamp()) / p.value) * p.value - extract(epoch from clock_timestamp()))::float8 "left"
+       from iam.security_param p where p.key = 'login_window_seconds'`);
+  if (w.left < needS) await sleep(Math.ceil(w.left * 1000) + 500);
+  return w.left;
 }
 
 export async function audDbTests(): Promise<void> {
@@ -98,7 +109,11 @@ export async function audDbTests(): Promise<void> {
       const s1 = await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200);
       const [o1] = await outboxOf(p);
       ok(s1.failed >= 1 && o1.status === "QUEUED" && o1.send_attempts === 1, `setelah gagal: ${JSON.stringify(o1)}`);
-      await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+      // Issue #5: kiriman ulang menunggu jeda backoff (bukan putaran berikutnya). Tunggu kondisi terkirim.
+      await waitFor("kirim ulang setelah jeda", async () => {
+        await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+        return good.count(p) > 0 ? true : undefined;
+      });
       const [o2] = await outboxOf(p);
       eq(o2.status, "SENT", "status setelah kirim kedua");
       eq(good.count(p), 1, "terkirim sekali");
@@ -123,7 +138,10 @@ export async function audDbTests(): Promise<void> {
       await c2.end();
       eq(overlap, 0, "pekerjaan sama diambil dua worker");
       ok(ids1.size + ids2.length >= 10, `jumlah diambil ${ids1.size + ids2.length}`);
-      await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);    // bersihkan antrean
+      await waitFor("bersihkan antrean", async () => {    // pekerjaan yang digagalkan menunggu jeda backoff
+        await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+        return phones.every((x) => good.count(x) > 0) ? true : undefined;
+      });
       // c) OTP kedaluwarsa tidak dikirim
       const pe = newPhone();
       await asRole("auth_runtime", "select iam.register_start($1)", [pe]);
@@ -146,7 +164,12 @@ export async function audDbTests(): Promise<void> {
       // e) batas percobaan kirim (TEST_ONLY = 3) -> FAILED, tidak diulang tanpa batas
       const pf = newPhone();
       await asRole("auth_runtime", "select iam.register_start($1)", [pf]);
-      for (let i = 0; i < 5; i++) await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200);
+      await waitFor("batas percobaan tercapai", async () => {    // tiap percobaan menunggu jeda backoff
+        await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200);
+        const [x] = await outboxOf(pf);
+        return x.status === "FAILED" ? true : undefined;
+      });
+      await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200);   // setelah FAILED tidak diambil lagi
       const [of] = await outboxOf(pf);
       ok(of.status === "FAILED" && of.send_attempts === 3, `batas percobaan: ${JSON.stringify(of)}`);
       // f) log kegagalan tidak memuat kode
@@ -242,6 +265,7 @@ export async function audDbTests(): Promise<void> {
     const o = await registerOwnerSql();
     const ghost = newPhone();
     const out: string[] = [];
+    await ensureWindowMargin(60);
     for (const [label, phone] of [["terdaftar", o.phone], ["tidak terdaftar", ghost]] as const) {
       const pool = new Pool({ host: RUNTIME_HOST, port: RUNTIME_PORT, user: "auth_runtime", database: DBNAME, max: 50 });
       const clients = await Promise.all(Array.from({ length: 50 }, () => pool.connect()));
@@ -308,4 +332,132 @@ export async function audDbTests(): Promise<void> {
     eq(logout, "OK", "logout");
     return "undang PRO/FREE -> TENANT_LOCKED; aktivasi tertunda -> INVITE_INVALID; cabut sesi/nonaktifkan/logout -> OK. Penjualan: modul belum ada di PR ini (tidak dapat diuji)";
   });
+  // ------------------------------------------------------------------ Issue #5: retry OTP bertahap
+  const job = async (phone: string) => (await admin<{ id: string; status: string; send_attempts: number; next_attempt_at: string | null; last_failed_at: string | null; gap: number | null }>(
+    `select id::text, status, send_attempts, next_attempt_at::text, last_failed_at::text,
+            extract(epoch from (next_attempt_at - last_failed_at))::float8 gap
+       from iam.otp_outbox where phone_e164=$1 order by created_at desc limit 1`, [phone]))[0];
+
+  await test("OTP-RETRY-01", KO, "Retry OTP: jeda setelah gagal, jeda naik bertahap (dibatasi maks), batas percobaan -> FAILED, diaudit tanpa nomor/kode", async () => {
+    const pool = rolePool("otp_dispatch_runtime");
+    const fail = new FailingSender();
+    const good = new TestOtpSender();
+    const p = newPhone();
+    await asRole("auth_runtime", "select iam.register_start($1)", [p]);
+    // Gagal #1 -> QUEUED, jeda = dasar (1 dtk TEST_ONLY); tidak diambil sebelum jatuh tempo.
+    await waitFor("percobaan #1", async () => { await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200); const j = await job(p); return j.send_attempts === 1 ? j : undefined; });
+    const j1 = await job(p);
+    ok(j1.status === "QUEUED" && Math.abs((j1.gap ?? 0) - 1) < 0.01, `jeda #1: ${JSON.stringify(j1)}`);
+    await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+    const early = await job(p);
+    ok(early.send_attempts === 1 && good.count(p) === 0, `diambil sebelum jatuh tempo: ${JSON.stringify(early)}`);
+    // Gagal #2 -> jeda 2 dtk (dasar × 2, = batas maks TEST_ONLY 2).
+    await waitFor("percobaan #2", async () => { await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200); const j = await job(p); return j.send_attempts === 2 ? j : undefined; });
+    const j2 = await job(p);
+    ok(j2.status === "QUEUED" && Math.abs((j2.gap ?? 0) - 2) < 0.01, `jeda #2: ${JSON.stringify(j2)}`);
+    // Gagal #3 = batas percobaan (3 TEST_ONLY) -> FAILED, tidak diambil lagi.
+    await waitFor("percobaan #3", async () => { await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200); const j = await job(p); return j.send_attempts === 3 ? j : undefined; });
+    const j3 = await job(p);
+    ok(j3.status === "FAILED" && j3.next_attempt_at === null, `setelah #3: ${JSON.stringify(j3)}`);
+    await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+    eq(good.count(p), 0, "dikirim setelah FAILED");
+    const ev = await admin<{ kind: string; d: string }>("select kind, detail::text d from iam.auth_event where detail->>'job' = $1 order by at", [j3.id]);
+    ok(ev.map((e) => e.kind).join(",") === "OTP_DISPATCH_FAILED,OTP_DISPATCH_FAILED,OTP_DISPATCH_GAVE_UP", `audit: ${ev.map((e) => e.kind).join(",")}`);
+    const leak = ev.filter((e) => e.d.includes(p) || fail.seen.some((c) => e.d.includes(c)));
+    eq(leak.length, 0, "nomor/kode di audit");
+    // Challenge kedaluwarsa tidak dikirim walau pekerjaan sudah jatuh tempo.
+    const pe = newPhone();
+    await asRole("auth_runtime", "select iam.register_start($1)", [pe]);
+    await waitFor("gagal sekali", async () => { await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200); const j = await job(pe); return j.send_attempts === 1 ? j : undefined; });
+    await admin("update iam.otp_challenge set created_at=now()-interval '1 hour', expires_at=now()-interval '59 minutes' where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [pe]);
+    await sleep(1100);
+    await dispatchOtps(pool, good, TEST_OTP_MAC_KEY, 200);
+    const je = await job(pe);
+    ok(je.status === "EXPIRED" && good.count(pe) === 0, `kedaluwarsa: ${JSON.stringify(je)}`);
+    return "gagal#1 jeda 1 dtk (tidak diambil lebih awal) -> gagal#2 jeda 2 dtk -> gagal#3 FAILED; audit FAILED,FAILED,GAVE_UP tanpa nomor/kode; kedaluwarsa -> EXPIRED";
+  });
+
+  await test("OTP-RETRY-02", KO, "Worker mati pada percobaan terakhir: pekerjaan tidak macet di LEASED, ditandai FAILED & diaudit; lease lama tidak bisa ack/set kode", async () => {
+    const pool = rolePool("otp_dispatch_runtime");
+    const fail = new FailingSender();
+    const p = newPhone();
+    await asRole("auth_runtime", "select iam.register_start($1)", [p]);
+    for (const n of [1, 2]) {
+      await waitFor(`percobaan #${n}`, async () => { await dispatchOtps(pool, fail, TEST_OTP_MAC_KEY, 200); const j = await job(p); return j.send_attempts === n ? j : undefined; });
+    }
+    // Percobaan #3 diambil lalu worker "mati" (tanpa ack/fail).
+    const lease = await waitFor("klaim #3", async () => {
+      const r = await asRole<{ r_job: string; r_lease: Buffer; r_phone: string }>("otp_dispatch_runtime", "select * from iam.otp_dispatch_claim(200)");
+      return r.find((x) => x.r_phone === p);
+    });
+    await sleep(2300);   // lease TEST_ONLY 2 dtk
+    await asRole("otp_dispatch_runtime", "select * from iam.otp_dispatch_claim(200)");
+    const j = await job(p);
+    const ackOld = (await asRole<{ ok: boolean }>("otp_dispatch_runtime", "select iam.otp_dispatch_ack($1,$2) ok", [lease.r_job, lease.r_lease]))[0].ok;
+    const setOld = (await asRole<{ ok: boolean }>("otp_dispatch_runtime", "select iam.otp_dispatch_set_code($1,$2,$3) ok", [lease.r_job, lease.r_lease, Buffer.alloc(32, 7)]))[0].ok;
+    ok(j.status === "FAILED" && j.send_attempts === 3 && !ackOld && !setOld, `${JSON.stringify(j)} ack=${ackOld} set=${setOld}`);
+    const [g] = await admin<{ n: number }>("select count(*)::int n from iam.auth_event where kind='OTP_DISPATCH_GAVE_UP' and detail->>'job'=$1", [j.id]);
+    eq(g.n, 1, "audit GAVE_UP");
+    return "LEASED kedaluwarsa pada percobaan terakhir -> FAILED + audit; ack & set kode dengan lease lama ditolak";
+  });
+
+  // ------------------------------------------------------------------ Issue #5: keamanan login
+  const loginSql = async (phone: string, pw: string) =>
+    (await asRole<{ r_status: string }>("auth_runtime", "select r_status from iam.login($1,$2,$3)", [phone, pw, newDevice()]))[0].r_status;
+  const rollWindow = (phone: string) =>   // simulasi pergantian jendela: penghitung jendela sekarang digeser ke jendela lalu
+    admin(`update iam.rate_limit_bucket set window_start = window_start - make_interval(secs => (select value from iam.security_param where key='login_window_seconds'))
+            where kind='LOGIN_FAIL' and key_hash=sha256(convert_to($1,'UTF8'))`, [phone]);
+
+  await test("LOGIN-WINDOW-01", K, "Pergantian jendela batas laju: penghitung jendela lama tidak terbawa; batas berlaku lagi di jendela baru", async () => {
+    await ensureWindowMargin(30);
+    const o = await registerOwnerSql();
+    const r1: string[] = [];
+    for (let i = 0; i < 6; i++) r1.push(await loginSql(o.phone, "salah-" + i));
+    ok(r1.slice(0, 5).every((x) => x === "INVALID_CREDENTIALS") && r1[5] === "RATE_LIMITED", r1.join(","));
+    await rollWindow(o.phone);
+    const okNow = await loginSql(o.phone, PW);
+    const r2: string[] = [];
+    for (let i = 0; i < 6; i++) r2.push(await loginSql(o.phone, "salah2-" + i));
+    ok(okNow === "OK" && r2.slice(0, 5).every((x) => x === "INVALID_CREDENTIALS") && r2[5] === "RATE_LIMITED", `${okNow} | ${r2.join(",")}`);
+    return "jendela 1: 5 salah lalu dibatasi; jendela baru: sandi benar OK, 5 salah lalu dibatasi lagi";
+  });
+
+  await test("LOGIN-VICTIM-01", K, "Risiko penguncian nomor korban: terbukti TERBATAS satu jendela & per nomor (mitigasi lebih lanjut = keputusan kebijakan)", async () => {
+    await ensureWindowMargin(30);
+    const victim = await registerOwnerSql();
+    const other = await registerOwnerSql();
+    for (let i = 0; i < 5; i++) await loginSql(victim.phone, "penyerang-" + i);
+    const blocked = await loginSql(victim.phone, PW);
+    const otherOk = await loginSql(other.phone, PW);
+    await rollWindow(victim.phone);
+    const after = await loginSql(victim.phone, PW);
+    ok(blocked === "RATE_LIMITED" && otherOk === "OK" && after === "OK", `${blocked} ${otherOk} ${after}`);
+    return "5 salah oleh pihak lain -> korban RATE_LIMITED (risiko nyata, dicatat terbuka); nomor lain tidak terdampak; jendela baru -> korban OK";
+  });
+
+  await test("LOGIN-ENUM-01", K, "Respons login nomor terdaftar (sandi salah) dan tidak terdaftar identik; waktu respons diukur (bcrypt dijalankan di kedua jalur)", async () => {
+    await ensureWindowMargin(30);
+    const o = await registerOwnerSql();
+    const ghosts = Array.from({ length: 4 }, () => newPhone());
+    const reg: number[] = [];
+    const unreg: number[] = [];
+    const sts = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      // tiap nomor maks 4 percobaan agar tidak menyentuh batas laju (5)
+      const ph = i < 4 ? o.phone : (await registerOwnerSql()).phone;
+      let t = process.hrtime.bigint();
+      sts.add(await loginSql(ph, "salah-a-" + i));
+      reg.push(Number(process.hrtime.bigint() - t) / 1e6);
+      t = process.hrtime.bigint();
+      sts.add(await loginSql(ghosts[i % 4], "salah-b-" + i));
+      unreg.push(Number(process.hrtime.bigint() - t) / 1e6);
+    }
+    const med = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    const mr = med(reg);
+    const mu = med(unreg);
+    eq([...sts].join(","), "INVALID_CREDENTIALS", "status berbeda");
+    ok(mu / mr > 0.5 && mu / mr < 2, `median terdaftar ${mr.toFixed(1)} ms vs tidak terdaftar ${mu.toFixed(1)} ms`);
+    return `status identik INVALID_CREDENTIALS; median waktu terdaftar ${mr.toFixed(1)} ms vs tidak terdaftar ${mu.toFixed(1)} ms (rasio ${(mu / mr).toFixed(2)}; pengukuran lab, bukan bukti tahan serangan waktu)`;
+  });
+
 }

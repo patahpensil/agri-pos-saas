@@ -19,6 +19,9 @@ COMMON = (
        ("AUD-LOCK-01", DB), ("AUD-LOCK-01", API)]
     # Audit ulang PR #4 (R4-01, R4-02)
     + [("AUD-OTP-03", API), ("AUD-OTP-04", DB), ("AUD-OTP-04", API)]
+    # Issue #5: retry OTP bertahap & keamanan login
+    + [("OTP-RETRY-01", "integrasi DB/pengirim OTP"), ("OTP-RETRY-02", "integrasi DB/pengirim OTP"),
+       ("LOGIN-WINDOW-01", DB), ("LOGIN-VICTIM-01", DB), ("LOGIN-ENUM-01", DB)]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
@@ -71,6 +74,7 @@ MUTATIONS = {
     "move_transition": ["INV-AUD-04-K"],
     "hold_origin": ["INV-HOLD-ORIGIN", "INV-HOLD-ORIGIN-03"],
     "hold_attribution": ["INV-HOLD-ORIGIN-02"],
+    "otp_backoff": ["OTP-RETRY-01"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),

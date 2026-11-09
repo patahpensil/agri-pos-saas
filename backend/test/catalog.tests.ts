@@ -4,10 +4,9 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { Client } from "pg";
-import { TestOtpSender } from "../src/auth/otp-sender";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, asActor, asRole, eq, errOf, inviteAndActivateAdminSql,
-  makePro, notRun, ok, registerOwnerSql, test,
+  harnessSender, makePro, notRun, ok, registerOwnerSql, test,
 } from "./harness";
 
 const KA = "API";
@@ -65,7 +64,7 @@ export async function catalogTests(): Promise<void> {
     otpSender: "test", ipHashSecret: Buffer.from("TEST_ONLY_ip_hash_secret_catalog_0123456789"), otpMacKey: TEST_OTP_MAC_KEY,
     otpDispatchIntervalMs: 1000, trustProxyHops: 0,
   };
-  const { app, db } = await createApp(cfg, { otpSender: new TestOtpSender() });
+  const { app, db } = await createApp(cfg, { otpSender: harnessSender });
   await app.listen(0, "127.0.0.1");
   base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}/api/v1`;
 

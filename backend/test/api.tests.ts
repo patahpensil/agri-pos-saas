@@ -2,21 +2,31 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { setLogSink } from "../src/common/log";
-import { TestOtpSender } from "../src/auth/otp-sender";
-import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, makePro, newDevice, newPhone, ok, sleep, test } from "./harness";
+import { OtpSender } from "../src/auth/otp-sender";
+import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, harnessSender, makePro, newDevice, newPhone, ok, test, waitFor } from "./harness";
 
 const K = "API";
 const LOGS: string[] = [];
 let base = "";
-// Pengirim uji yang bisa dibuat gagal N kali (AUD-OTP-03).
-class ToggleSender extends TestOtpSender {
-  failRemaining = 0;
-  override async send(phone: string, code: string): Promise<void> {
-    if (this.failRemaining > 0) {
-      this.failRemaining--;
+// Pengirim uji yang bisa dibuat gagal N kali UNTUK NOMOR TERTENTU (AUD-OTP-03). Kegagalan per nomor, bukan
+// global, agar pekerjaan OTP lain di antrean tidak "memakan" jatah gagal (akar masalah Issue #5). Kode yang
+// berhasil dikirim masuk kotak masuk bersama harness.
+class ToggleSender implements OtpSender {
+  readonly kind = "test";
+  readonly failFor = new Map<string, number>();
+  async send(phone: string, code: string): Promise<void> {
+    const n = this.failFor.get(phone) ?? 0;
+    if (n > 0) {
+      this.failFor.set(phone, n - 1);
       throw new Error("penyedia gagal (simulasi)");
     }
-    return super.send(phone, code);
+    return harnessSender.send(phone, code);
+  }
+  last(phone: string): string | undefined {
+    return harnessSender.last(phone);
+  }
+  count(phone: string): number {
+    return harnessSender.count(phone);
   }
 }
 const sender = new ToggleSender();
@@ -435,25 +445,21 @@ export async function apiTests(): Promise<void> {
 
     await test("AUD-OTP-03", K, "Pengiriman OTP pertama gagal -> pemroses berkala mengirim ulang TANPA permintaan API baru", async () => {
       const phone = newPhone();
-      sender.failRemaining = 1;
+      sender.failFor.set(phone, 1);
       const start = await http("POST", "/auth/register/start", { phone });
       eq(start.status, 202, "register/start");
       eq(sender.count(phone), 0, "terkirim saat pengirim gagal");
       const [q] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
       ok(q.status === "QUEUED" && q.send_attempts === 1, `antrean setelah gagal: ${JSON.stringify(q)}`);
-      let waited = 0;
-      while (sender.count(phone) === 0 && waited < 10_000) {
-        await sleep(100);
-        waited += 100;
-      }
+      const t0 = Date.now();
+      // Tunggu kondisi: pemroses berkala (tanpa request API baru) mengirim ulang setelah jeda backoff, dan ack tercatat.
+      const d = await waitFor("kiriman ulang oleh pemroses berkala", async () => {
+        const [x] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
+        return x.status === "SENT" ? x : undefined;
+      });
+      const waited = Date.now() - t0;
       eq(sender.count(phone), 1, "kiriman ulang oleh pemroses berkala");
-      // ack ditulis sesudah send() selesai; tunggu sebentar sampai konfirmasi tercatat.
-      let d = { status: "", send_attempts: 0 };
-      for (let i = 0; i < 20 && d.status !== "SENT"; i++) {
-        [d] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
-        if (d.status !== "SENT") await sleep(100);
-      }
-      ok(d.status === "SENT" && d.send_attempts === 2, `antrean setelah kirim ulang: ${JSON.stringify(d)}`);
+      ok(d.send_attempts === 2, `antrean setelah kirim ulang: ${JSON.stringify(d)}`);
       const v = await http("POST", "/auth/register/verify-otp", { phone, code: otpOf(phone), password: PW, businessName: "Kios Retry Otomatis", timezone: "Asia/Makassar", deviceId: newDevice() });
       eq(v.status, 201, "verifikasi kode kiriman ulang");
       return `gagal -> QUEUED; terkirim ulang otomatis setelah ${waited} ms tanpa request API; SENT (2 percobaan); verifikasi 201`;

@@ -134,18 +134,36 @@ export const PW = "sandi-uji-panjang-1";
 
 // Kunci MAC OTP khusus uji. Kunci produksi wajib dari luar repo (OTP_MAC_KEY).
 export const TEST_OTP_MAC_KEY = Buffer.from("TEST_ONLY_otp_mac_key_for_tests_0123456789abcdef");
+// SATU kotak masuk OTP untuk semua pengirim uji (harness + pemroses berkala aplikasi uji). Issue #5: antrean OTP
+// bersifat global (sesuai produksi), jadi pemroses mana pun boleh mengirim; yang penting kodenya tidak hilang.
+// Aplikasi uji WAJIB memakai harnessSender (atau pembungkusnya) sebagai pengirim OTP.
 export const harnessSender = new TestOtpSender();
 
 export function mac(purpose: OtpPurpose, phone: string, code: string): Buffer {
   return otpMac(TEST_OTP_MAC_KEY, purpose, phone, code);
 }
 
-// Menjalankan worker pengirim sah (role otp_dispatch_runtime) lalu mengambil kode dari pengirim uji.
+// Tunggu kondisi (bukan tidur dengan waktu tetap). Gagal dengan pesan jelas bila tidak tercapai.
+export async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, timeoutMs = 15_000, stepMs = 50): Promise<T> {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v !== undefined) return v;
+    if (Date.now() - t0 > timeoutMs) throw new Fail(`${what}: tidak tercapai dalam ${timeoutMs} ms`);
+    await sleep(stepMs);
+  }
+}
+
+// Menjalankan worker pengirim sah (role otp_dispatch_runtime) lalu menunggu SAMPAI pekerjaan OTP terbaru
+// untuk nomor ini berstatus SENT dan kodenya ada di kotak masuk bersama (siapa pun pemroses yang mengirim).
 export async function claimCode(phone: string): Promise<string> {
-  await dispatchOtps(rolePool("otp_dispatch_runtime"), harnessSender, TEST_OTP_MAC_KEY, 200);
-  const code = harnessSender.last(phone);
-  ok(code, `kode OTP untuk ${phone} tidak terkirim`);
-  return code;
+  return waitFor(`kode OTP untuk ${phone} tidak terkirim`, async () => {
+    await dispatchOtps(rolePool("otp_dispatch_runtime"), harnessSender, TEST_OTP_MAC_KEY, 200);
+    const [o] = await admin<{ status: string }>(
+      "select status from iam.otp_outbox where phone_e164=$1 order by created_at desc limit 1", [phone]);
+    if (o && (o.status === "FAILED" || o.status === "EXPIRED")) throw new Fail(`OTP ${phone} berstatus ${o.status}`);
+    return o?.status === "SENT" ? harnessSender.last(phone) : undefined;
+  });
 }
 
 // register_verify dengan MAC kode (seperti backend).
@@ -196,4 +214,6 @@ export async function inviteAndActivateAdminSql(owner: Owner): Promise<{ phone: 
   return { phone, token: r.r_token, membership: inv.id, device };
 }
 
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
