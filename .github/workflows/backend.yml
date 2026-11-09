@@ -108,7 +108,7 @@ jobs:
         working-directory: backend
         env:
           TEST_TARGET: pgbouncer
-          TEST_SUITES: db,aud,catalog,inv,pooler,api
+          TEST_SUITES: db,aud,catalog,inv,fefo,pooler,api
           TEST_DB_NAME: ${{ env.DB }}
           TEST_RUNTIME_HOST: 127.0.0.1
           TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
@@ -167,6 +167,8 @@ jobs:
           bash db/test/mutation.sh HOLD_ORIGIN INV-HOLD-ORIGIN,INV-HOLD-ORIGIN-03 || rc=1
           bash db/test/mutation.sh HOLD_ATTRIBUTION INV-HOLD-ORIGIN-02 || rc=1
           bash db/test/mutation.sh OTP_BACKOFF OTP-RETRY-01 || rc=1
+          bash db/test/mutation.sh FEFO_GUARD FEFO-02 || rc=1
+          bash db/test/mutation.sh FEFO_EXPIRY FEFO-07 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

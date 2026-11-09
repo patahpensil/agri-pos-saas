@@ -161,6 +161,12 @@ export const schemas = {
     })
     .strict(),
   stockQuery: z.object({ productId: uuid.optional() }).strict(),
+  fefoQuery: z.object({
+    productId: uuid,
+    packageId: uuid.optional(),
+    locationId: uuid.optional(),
+    limit: z.string().regex(/^[0-9]{1,2}$/).transform(Number).refine((n) => n >= 1 && n <= 50).optional(),
+  }).strict(),
   // Inventori (INV-01/05/06). Tidak ada field tenant/role/aktor; database menurunkannya dari sesi.
   inventoryReceipt: z
     .object({

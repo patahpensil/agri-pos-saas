@@ -30,7 +30,7 @@ const ALLOW: Record<string, string[]> = {
     "iam.security_params_status",
   ],
   app_runtime: [
-    "app.hold_list", "app.inventory_receive", "app.inventory_reconcile", "app.logout", "app.package_open", "app.product_create",
+    "app.hold_list", "app.inventory_fefo", "app.inventory_receive", "app.inventory_reconcile", "app.logout", "app.package_open", "app.product_create",
     "app.product_get", "app.product_list", "app.product_update", "app.reauth_start", "app.session_list", "app.session_revoke", "app.staff_deactivate",
     "app.staff_invite", "app.staff_list", "app.stock_hold", "app.stock_list", "app.stock_move", "app.stock_release", "app.tenant_me",
   ],
