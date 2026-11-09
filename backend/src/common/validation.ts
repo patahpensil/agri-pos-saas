@@ -167,6 +167,38 @@ export const schemas = {
     locationId: uuid.optional(),
     limit: z.string().regex(/^[0-9]{1,2}$/).transform(Number).refine((n) => n >= 1 && n <= 50).optional(),
   }).strict(),
+  // INV-07: opname terstruktur PRO untuk barang siap jual, per batch dan kemasan.
+  // Waktu countedAt hanya mengidentifikasi waktu hitung fisik; posting baru terjadi setelah Owner setuju.
+  stockCount: z.object({
+    productId: uuid,
+    locationId: uuid.optional(),
+    countedAt: z.string().datetime({ offset: true }),
+    reason,
+    lines: z.array(z.object({
+      packageId: uuid,
+      batchId: uuid,
+      physicalQty: z.number().int().min(0).max(10_000_000),
+      cost: z.object({
+        basis: z.enum(["KNOWN", "BONUS_ZERO", "UNVERIFIED"]),
+        totalIdr: rupiah.optional(),
+        reason: z.string().trim().min(1).max(200).optional(),
+        origin: z.string().trim().min(1).max(200).optional(),
+      }).strict().optional(),
+    }).strict()).min(1).max(100).superRefine((lines, ctx) => {
+      const seen = new Set<string>();
+      lines.forEach((line, index) => {
+        const key = line.packageId + "/" + line.batchId;
+        if (seen.has(key)) ctx.addIssue({ code: "custom", path: [index], message: "duplikat kemasan dan batch" });
+        seen.add(key);
+      });
+    }),
+  }).strict(),
+  stockCountApprove: z.object({
+    expectedVersion: z.number().int().min(1).max(2147483647),
+    reason,
+    referenceDocument: z.string().trim().min(1).max(120).optional(),
+    reauthToken: z.string().regex(/^[0-9a-f]{64}$/),
+  }).strict(),
   // Inventori (INV-01/05/06). Tidak ada field tenant/role/aktor; database menurunkannya dari sesi.
   inventoryReceipt: z
     .object({
@@ -208,18 +240,22 @@ export const schemas = {
   reauth: z
     .object({
       password,
-      action: z.enum(["inventory.release", "inventory.move"]),
+      action: z.enum(["inventory.release", "inventory.move", "inventory.count.approve"]),
       targetId: uuid,
       scope: z
         .object({
           productId: uuid, packageId: uuid, batchId: uuid, locationId: uuid.optional(),
           from: z.enum(["INSPECTION", "QUARANTINE"]), to: z.literal("SALEABLE"), qty: z.number().int().min(1).max(10_000_000),
-        })
-        .strict()
+        }).strict()
+        .or(z.object({ expectedVersion: z.number().int().min(1).max(2147483647) }).strict())
         .optional(),
     })
     .strict()
-    .refine((r) => (r.action === "inventory.move") === (r.scope !== undefined), "scope wajib untuk inventory.move saja"),
+    .refine((r) =>
+      (r.action === "inventory.release" && r.scope === undefined)
+      || (r.action === "inventory.move" && !!r.scope && "productId" in r.scope)
+      || (r.action === "inventory.count.approve" && !!r.scope && "expectedVersion" in r.scope),
+      "scope harus sesuai aksi reautentikasi"),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 
