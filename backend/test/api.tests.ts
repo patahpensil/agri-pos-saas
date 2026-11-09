@@ -2,21 +2,31 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { setLogSink } from "../src/common/log";
-import { TestOtpSender } from "../src/auth/otp-sender";
-import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, makePro, newDevice, newPhone, ok, sleep, test } from "./harness";
+import { OtpSender } from "../src/auth/otp-sender";
+import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, harnessSender, makePro, newDevice, newPhone, ok, test, waitFor } from "./harness";
 
 const K = "API";
 const LOGS: string[] = [];
 let base = "";
-// Pengirim uji yang bisa dibuat gagal N kali (AUD-OTP-03).
-class ToggleSender extends TestOtpSender {
-  failRemaining = 0;
-  override async send(phone: string, code: string): Promise<void> {
-    if (this.failRemaining > 0) {
-      this.failRemaining--;
+// Pengirim uji yang bisa dibuat gagal N kali UNTUK NOMOR TERTENTU (AUD-OTP-03). Kegagalan per nomor, bukan
+// global, agar pekerjaan OTP lain di antrean tidak "memakan" jatah gagal (akar masalah Issue #5). Kode yang
+// berhasil dikirim masuk kotak masuk bersama harness.
+class ToggleSender implements OtpSender {
+  readonly kind = "test";
+  readonly failFor = new Map<string, number>();
+  async send(phone: string, code: string): Promise<void> {
+    const n = this.failFor.get(phone) ?? 0;
+    if (n > 0) {
+      this.failFor.set(phone, n - 1);
       throw new Error("penyedia gagal (simulasi)");
     }
-    return super.send(phone, code);
+    return harnessSender.send(phone, code);
+  }
+  last(phone: string): string | undefined {
+    return harnessSender.last(phone);
+  }
+  count(phone: string): number {
+    return harnessSender.count(phone);
   }
 }
 const sender = new ToggleSender();
@@ -36,9 +46,13 @@ async function http(method: string, path: string, body?: unknown, token?: string
   return { status: r.status, body: json, text };
 }
 
-function otpOf(phone: string): string {
-  const c = sender.last(phone);
-  ok(c, `OTP untuk ${phone} tidak terkirim`);
+// Issue #5: jawaban 202 tidak menjamin kode sudah terkirim (pemroses berkala bisa sedang memegang lease
+// pekerjaan ini). Tunggu kondisi: pekerjaan OTP terbaru nomor ini SENT dan kodenya ada di kotak masuk bersama.
+async function otpOf(phone: string): Promise<string> {
+  const c = await waitFor(`OTP untuk ${phone} tidak terkirim`, async () => {
+    const [o] = await admin<{ status: string }>("select status from iam.otp_outbox where phone_e164=$1 order by created_at desc limit 1", [phone]);
+    return o?.status === "SENT" ? sender.last(phone) : undefined;
+  });
   SECRETS.add(c);
   return c;
 }
@@ -50,7 +64,7 @@ async function registerOwner(name = "Kios API"): Promise<ApiOwner> {
   const device = newDevice();
   SECRETS.add(PW);
   eq((await http("POST", "/auth/register/start", { phone })).status, 202, "register/start");
-  const r = await http("POST", "/auth/register/verify-otp", { phone, code: otpOf(phone), password: PW, businessName: name, timezone: "Asia/Makassar", deviceId: device });
+  const r = await http("POST", "/auth/register/verify-otp", { phone, code: await otpOf(phone), password: PW, businessName: name, timezone: "Asia/Makassar", deviceId: device });
   eq(r.status, 201, `verify-otp ${r.text}`);
   return { phone, token: r.body.token as string, tenant: r.body.tenantId as string, device };
 }
@@ -60,7 +74,7 @@ async function addAdmin(o: ApiOwner): Promise<{ phone: string; token: string; id
   const device = newDevice();
   const inv = await http("POST", "/staff", { phone, displayName: "Admin API" }, o.token);
   eq(inv.status, 202, `undang admin ${inv.text}`);
-  const act = await http("POST", "/auth/staff-activation/verify", { phone, code: otpOf(phone), password: PW, deviceId: device });
+  const act = await http("POST", "/auth/staff-activation/verify", { phone, code: await otpOf(phone), password: PW, deviceId: device });
   eq(act.status, 201, `aktivasi admin ${act.text}`);
   return { phone, token: act.body.token as string, id: inv.body.staffId as string, device };
 }
@@ -97,7 +111,7 @@ export async function apiTests(): Promise<void> {
       eq((await http("POST", "/auth/register/start", { phone })).status, 202, "start");
       const before = (await admin<{ n: number }>("select count(*)::int n from iam.user_account where phone_e164=$1", [phone]))[0].n;
       eq(before, 0, "akun sebelum OTP");
-      const r = await http("POST", "/auth/register/verify-otp", { phone, code: otpOf(phone), password: PW, businessName: "Kios Pak Budi", timezone: "Asia/Makassar", deviceId: newDevice() });
+      const r = await http("POST", "/auth/register/verify-otp", { phone, code: await otpOf(phone), password: PW, businessName: "Kios Pak Budi", timezone: "Asia/Makassar", deviceId: newDevice() });
       eq(r.status, 201, "verify");
       const me = await http("GET", "/tenant/me", undefined, r.body.token as string);
       const [s] = await admin<{ h: number }>("select extract(epoch from expires_at - activated_at)::int/3600 h from platform.subscription where tenant_id=$1", [r.body.tenantId]);
@@ -115,7 +129,7 @@ export async function apiTests(): Promise<void> {
     await test("T-AUTH-02", K, "OTP salah, berulang, kedaluwarsa, dan replay ditolak", async () => {
       const phone = newPhone();
       await http("POST", "/auth/register/start", { phone });
-      const code = otpOf(phone);
+      const code = await otpOf(phone);
       const wrong = code === "000000" ? "111111" : "000000";
       const body = (c: string) => ({ phone, code: c, password: PW, businessName: "K", timezone: "Asia/Makassar", deviceId: newDevice() });
       const st: number[] = [];
@@ -126,14 +140,14 @@ export async function apiTests(): Promise<void> {
       // kedaluwarsa
       const p2 = newPhone();
       await http("POST", "/auth/register/start", { phone: p2 });
-      const c2 = otpOf(p2);
+      const c2 = await otpOf(p2);
       await admin("update iam.otp_challenge set created_at = now() - interval '1 hour', expires_at = now() - interval '59 minutes' where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null", [p2]);
       const exp = await http("POST", "/auth/register/verify-otp", { ...body(c2), phone: p2 });
       eq(exp.status, 400, "OTP kedaluwarsa");
       // replay
       const p3 = newPhone();
       await http("POST", "/auth/register/start", { phone: p3 });
-      const c3 = otpOf(p3);
+      const c3 = await otpOf(p3);
       eq((await http("POST", "/auth/register/verify-otp", { ...body(c3), phone: p3 })).status, 201, "pakai pertama");
       eq((await http("POST", "/auth/register/verify-otp", { ...body(c3), phone: p3, businessName: "K2" })).status, 400, "replay");
       return "5 salah -> 400x4 + 429; benar setelah terkunci -> 429; kedaluwarsa -> 400; replay -> 400";
@@ -369,7 +383,7 @@ export async function apiTests(): Promise<void> {
     await test("AUD-OTP-01", K, "OTP lewat API: pengirim sah menerima kode, sekali pakai, tidak ada di respons/log", async () => {
       const phone = newPhone();
       const start = await http("POST", "/auth/register/start", { phone });
-      const code = otpOf(phone);
+      const code = await otpOf(phone);
       ok(!start.text.includes(code), "kode di respons");
       const body = { phone, code, password: PW, businessName: "Kios OTP API", timezone: "Asia/Makassar", deviceId: newDevice() };
       const first = await http("POST", "/auth/register/verify-otp", body);
@@ -435,26 +449,22 @@ export async function apiTests(): Promise<void> {
 
     await test("AUD-OTP-03", K, "Pengiriman OTP pertama gagal -> pemroses berkala mengirim ulang TANPA permintaan API baru", async () => {
       const phone = newPhone();
-      sender.failRemaining = 1;
+      sender.failFor.set(phone, 1);
       const start = await http("POST", "/auth/register/start", { phone });
       eq(start.status, 202, "register/start");
       eq(sender.count(phone), 0, "terkirim saat pengirim gagal");
       const [q] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
       ok(q.status === "QUEUED" && q.send_attempts === 1, `antrean setelah gagal: ${JSON.stringify(q)}`);
-      let waited = 0;
-      while (sender.count(phone) === 0 && waited < 10_000) {
-        await sleep(100);
-        waited += 100;
-      }
+      const t0 = Date.now();
+      // Tunggu kondisi: pemroses berkala (tanpa request API baru) mengirim ulang setelah jeda backoff, dan ack tercatat.
+      const d = await waitFor("kiriman ulang oleh pemroses berkala", async () => {
+        const [x] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
+        return x.status === "SENT" ? x : undefined;
+      });
+      const waited = Date.now() - t0;
       eq(sender.count(phone), 1, "kiriman ulang oleh pemroses berkala");
-      // ack ditulis sesudah send() selesai; tunggu sebentar sampai konfirmasi tercatat.
-      let d = { status: "", send_attempts: 0 };
-      for (let i = 0; i < 20 && d.status !== "SENT"; i++) {
-        [d] = await admin<{ status: string; send_attempts: number }>("select status, send_attempts from iam.otp_outbox where phone_e164=$1", [phone]);
-        if (d.status !== "SENT") await sleep(100);
-      }
-      ok(d.status === "SENT" && d.send_attempts === 2, `antrean setelah kirim ulang: ${JSON.stringify(d)}`);
-      const v = await http("POST", "/auth/register/verify-otp", { phone, code: otpOf(phone), password: PW, businessName: "Kios Retry Otomatis", timezone: "Asia/Makassar", deviceId: newDevice() });
+      ok(d.send_attempts === 2, `antrean setelah kirim ulang: ${JSON.stringify(d)}`);
+      const v = await http("POST", "/auth/register/verify-otp", { phone, code: await otpOf(phone), password: PW, businessName: "Kios Retry Otomatis", timezone: "Asia/Makassar", deviceId: newDevice() });
       eq(v.status, 201, "verifikasi kode kiriman ulang");
       return `gagal -> QUEUED; terkirim ulang otomatis setelah ${waited} ms tanpa request API; SENT (2 percobaan); verifikasi 201`;
     });
@@ -464,7 +474,7 @@ export async function apiTests(): Promise<void> {
       await makePro(o.tenant);
       const phone = newPhone();
       eq((await http("POST", "/staff", { phone, displayName: "Admin OTP" }, o.token)).status, 202, "undang");
-      const first = otpOf(phone);
+      const first = await otpOf(phone);
       await admin("update iam.otp_challenge set created_at=now()-interval '1 hour', expires_at=now()-interval '59 minutes' where phone_hash=sha256(convert_to($1,'UTF8')) and voided_at is null and used_at is null", [phone]);
       const expired = await http("POST", "/auth/staff-activation/verify", { phone, code: first, password: PW, deviceId: newDevice() });
       eq(expired.status, 400, "OTP lama kedaluwarsa");
@@ -473,8 +483,10 @@ export async function apiTests(): Promise<void> {
       const nobody = await http("POST", "/auth/staff-activation/start", { phone: newPhone() });
       ok(sameShape(again, nobody), "jawaban berbeda untuk nomor tanpa undangan");
       eq(again.status, 202, "start");
+      // Tunggu kondisi (pengiriman bisa dilakukan pemroses berkala sesaat setelah 202).
+      await waitFor("OTP baru terkirim", async () => (sender.count(phone) >= n0 + 1 ? true : undefined));
       eq(sender.count(phone), n0 + 1, "OTP baru terkirim");
-      const act = await http("POST", "/auth/staff-activation/verify", { phone, code: otpOf(phone), password: PW, deviceId: newDevice() });
+      const act = await http("POST", "/auth/staff-activation/verify", { phone, code: await otpOf(phone), password: PW, deviceId: newDevice() });
       eq(act.status, 201, "aktivasi dengan OTP baru");
       return "OTP lama kedaluwarsa 400; start -> OTP baru (202, identik dgn nomor tanpa undangan); aktivasi 201";
     });
