@@ -28,8 +28,12 @@ psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f "$root/db/test/test_security_params.sq
 
 out="$RESULTS_DIR/mutation-$tag"
 mkdir -p "$out"
+suites="db,aud,catalog,inv"
+if [[ ",$ids," == *"FEFO-"* ]]; then
+  suites="$suites,fefo"
+fi
 set +e
-( cd "$root/backend" && TEST_TARGET=direct TEST_DB_NAME="$db" TEST_SUITES=db,aud,catalog,inv TEST_ONLY_IDS="$ids" \
+( cd "$root/backend" && TEST_TARGET=direct TEST_DB_NAME="$db" TEST_SUITES="$suites" TEST_ONLY_IDS="$ids" \
     TEST_RESULTS_DIR="$out" node dist/test/run.js ) > "$out/run.log" 2>&1
 set -e
 psql -X -q -d postgres -c "drop database if exists $db with (force)"
