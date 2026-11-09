@@ -90,7 +90,7 @@ jobs:
         working-directory: backend
         run: npm run build
 
-      - name: Uji langsung ke PostgreSQL (unit, startup, DB, audit, katalog, pooler, API)
+      - name: Uji langsung ke PostgreSQL (unit, startup, DB, audit, katalog, inventori, pooler, API)
         working-directory: backend
         env:
           TEST_TARGET: direct
@@ -103,12 +103,12 @@ jobs:
           TEST_RESULTS_DIR: results
         run: node dist/test/run.js
 
-      - name: Uji lewat PgBouncer mode transaksi (DB, audit, katalog, pooler, API)
+      - name: Uji lewat PgBouncer mode transaksi (DB, audit, katalog, inventori, pooler, API)
         if: always()
         working-directory: backend
         env:
           TEST_TARGET: pgbouncer
-          TEST_SUITES: db,aud,catalog,pooler,api
+          TEST_SUITES: db,aud,catalog,inv,pooler,api
           TEST_DB_NAME: ${{ env.DB }}
           TEST_RUNTIME_HOST: 127.0.0.1
           TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
@@ -149,6 +149,13 @@ jobs:
           bash db/test/mutation.sh NO_FORCE_BIZ T-DB-02 || rc=1
           bash db/test/mutation.sh PRODUCT_FK CAT-AUD-01 || rc=1
           bash db/test/mutation.sh TRUNCATE_GUARD CAT-AUD-02 || rc=1
+          bash db/test/mutation.sh IDEM_INV ST-INV-05 || rc=1
+          bash db/test/mutation.sh RECEIPT_EXPIRY INV-REC-02 || rc=1
+          bash db/test/mutation.sh HOLD_BLOCK ST-INV-07-INV || rc=1
+          bash db/test/mutation.sh OPEN_GUARD ST-INV-12 || rc=1
+          bash db/test/mutation.sh OWNER_RELEASE ST-INV-07-INV || rc=1
+          bash db/test/mutation.sh OWNER_MOVE INV-MOVE-01 || rc=1
+          bash db/test/mutation.sh MOVE_VALUE ST-COST-06 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

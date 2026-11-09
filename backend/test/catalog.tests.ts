@@ -461,7 +461,6 @@ export async function catalogTests(): Promise<void> {
       return "201; stockBase SALEABLE = 0";
     });
     notRun("ST-INV-01-POS", KA, "POS menolak jual sebelum stok masuk", "Checkout POS belum dibangun (di luar cakupan PR ini)");
-    notRun("ST-INV-05", KA, "Penerimaan stok dikirim ulang/dua koneksi", "Endpoint penerimaan stok (INV-01) belum dibangun; idempotensi stok awal diuji di CAT-08/CAT-15");
 
     await test("INV-03-EXP", KA, "Batch kedaluwarsa tidak bisa dicatat sebagai stok siap jual (validasi server)", async () => {
       const r = await post(A.token, pesticide(sku("EXP"), { opening: [{ packageKey: "botol", qty: 2, batch: { number: "OLD", expiresOn: "2020-01-01" }, cost: { basis: "KNOWN", totalIdr: 200 } }] }));

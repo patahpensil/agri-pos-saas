@@ -33,6 +33,16 @@ const DB_CODES: Record<string, [number, string]> = {
   BATCH_EXPIRED: [400, "Batch sudah kedaluwarsa dan tidak bisa dicatat sebagai stok siap jual"],
   COST_BASIS_INVALID: [400, "Basis biaya stok awal tidak sah"],
   OPENING_REQUIRED: [400, "Stok awal wajib diisi (boleh 0)"],
+  // Inventori
+  PACKAGE_INVALID: [400, "Varian kemasan tidak sah untuk produk ini"],
+  BATCH_INVALID: [400, "Batch tidak sah untuk produk ini"],
+  PACKAGE_NOT_OPENABLE: [409, "Kemasan ini tidak boleh dibuka"],
+  LOOSE_PACKAGE_REQUIRED: [409, "Pilih varian unit lepas yang aktif untuk hasil buka karton"],
+  PHYSICAL_CONFIRMATION_REQUIRED: [400, "Konfirmasi fisik buka karton wajib"],
+  INSUFFICIENT_STOCK: [409, "Stok tidak cukup"],
+  HOLD_ACTIVE: [409, "Produk/batch sedang ditahan; stok tidak boleh masuk siap jual"],
+  HOLD_NOT_ACTIVE: [409, "Penahanan sudah dilepas"],
+  INVENTORY_INCONSISTENT: [409, "Saldo stok tidak konsisten; jalankan rekonsiliasi"],
 };
 
 export function fromDbError(e: unknown): AppError | undefined {

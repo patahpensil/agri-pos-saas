@@ -26,6 +26,11 @@ COMMON = (
        ("ST-COST-01", DB), ("ST-COST-04", API), ("ST-COST-05", DB)]
     # Audit PR #6
     + [("CAT-AUD-01", DB), ("CAT-AUD-02", DB), ("CAT-AUD-03", DB), ("CAT-AUD-03", API)]
+    # Modul inventori: penerimaan, buka karton, tahan/lepas, pindah status (0009)
+    + [(i, API) for i in ("INV-REC-01", "ST-INV-05", "INV-REC-02", "INV-REC-03", "INV-REC-04", "ST-INV-02", "ST-INV-03",
+                          "ST-INV-08", "ST-INV-12", "ST-INV-07-INV", "INV-HOLD-02", "ST-COST-06", "ST-COST-03", "INV-MOVE-01",
+                          "INV-TENANT-01", "INV-LOCK-01", "INV-RECON-01")]
+    + [(i, DB) for i in ("INV-OPEN-01", "INV-HOLD-03", "INV-ATOM-01", "INV-APPEND-01", "INV-PRIV-01")]
 )
 # Uji mutasi (database terpisah, target langsung): kontrol dihapus -> ID ini WAJIB FAIL.
 MUTATIONS = {
@@ -45,6 +50,13 @@ MUTATIONS = {
     "no_force_biz": ["T-DB-02"],
     "product_fk": ["CAT-AUD-01"],
     "truncate_guard": ["CAT-AUD-02"],
+    "idem_inv": ["ST-INV-05"],
+    "receipt_expiry": ["INV-REC-02"],
+    "hold_block": ["ST-INV-07-INV"],
+    "open_guard": ["ST-INV-12"],
+    "owner_release": ["ST-INV-07-INV"],
+    "owner_move": ["INV-MOVE-01"],
+    "move_value": ["ST-COST-06"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),
