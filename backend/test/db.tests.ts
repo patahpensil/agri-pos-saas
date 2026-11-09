@@ -16,6 +16,9 @@ const TABLES = [
   "platform.tenant", "platform.location", "platform.subscription", "platform.entitlement_event",
   "iam.user_account", "iam.membership", "iam.otp_challenge", "iam.otp_outbox", "iam.session",
   "iam.auth_event", "iam.rate_limit_bucket", "iam.security_param",
+  // Modul produk & stok awal (migrasi 0008)
+  "biz.product", "biz.package_version", "biz.barcode", "biz.batch", "biz.inventory_event", "biz.inventory_ledger",
+  "biz.stock_balance", "biz.cost_pool", "biz.value_ledger", "biz.idempotency", "biz.audit_event", "biz.inventory_alert",
 ];
 
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.
@@ -25,8 +28,9 @@ const ALLOW: Record<string, string[]> = {
     "iam.security_params_status",
   ],
   app_runtime: [
-    "app.logout", "app.session_list", "app.session_revoke", "app.staff_deactivate", "app.staff_invite",
-    "app.staff_list", "app.tenant_me",
+    "app.inventory_reconcile", "app.logout", "app.product_create", "app.product_get", "app.product_list", "app.product_update",
+    "app.session_list", "app.session_revoke", "app.staff_deactivate", "app.staff_invite", "app.staff_list", "app.stock_list",
+    "app.tenant_me",
   ],
   otp_dispatch_runtime: ["iam.otp_dispatch_ack", "iam.otp_dispatch_claim", "iam.otp_dispatch_fail", "iam.otp_dispatch_set_code"],
 };
@@ -45,12 +49,12 @@ export async function dbTests(): Promise<void> {
     return "6 role: BYPASSRLS=false, superuser=false; role runtime tidak memiliki objek";
   });
 
-  await test("T-DB-02", K, "FORCE RLS aktif di semua tabel platform/iam (termasuk semua tabel ber-tenant_id)", async () => {
+  await test("T-DB-02", K, "FORCE RLS aktif di semua tabel platform/iam/biz (termasuk semua tabel ber-tenant_id)", async () => {
     const rows = await admin<{ t: string; rls: boolean; force: boolean; has_tenant: boolean }>(
       `select n.nspname||'.'||c.relname t, c.relrowsecurity rls, c.relforcerowsecurity force,
               exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attname='tenant_id' and not a.attisdropped) has_tenant
          from pg_class c join pg_namespace n on n.oid=c.relnamespace
-        where n.nspname in ('platform','iam') and c.relkind in ('r','p')`,
+        where n.nspname in ('platform','iam','biz') and c.relkind in ('r','p')`,
     );
     const bad = rows.filter((r) => !r.rls || !r.force).map((r) => r.t);
     eq(bad.length, 0, `tabel tanpa FORCE RLS: ${bad.join(",")}`);
@@ -82,7 +86,7 @@ export async function dbTests(): Promise<void> {
   await test("T-DB-04", K, "Fungsi SECURITY DEFINER: search_path terkunci, tanpa EXECUTE PUBLIC, allowlist runtime persis", async () => {
     const fns = await admin<{ f: string; secdef: boolean; cfg: string[] | null; pub: boolean }>(
       `select n.nspname||'.'||p.proname f, p.prosecdef secdef, p.proconfig cfg, has_function_privilege('public', p.oid, 'EXECUTE') pub
-         from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('iam','app')`,
+         from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('iam','app','biz')`,
     );
     for (const f of fns) {
       ok(!f.pub, `${f.f} dapat dieksekusi PUBLIC`);
@@ -91,12 +95,12 @@ export async function dbTests(): Promise<void> {
     for (const role of RUNTIME) {
       const got = (await admin<{ f: string }>(
         `select distinct n.nspname||'.'||p.proname f from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-          where n.nspname in ('iam','app','ext','platform') and has_function_privilege($1, p.oid, 'EXECUTE')
+          where n.nspname in ('iam','app','ext','platform','biz') and has_function_privilege($1, p.oid, 'EXECUTE')
           order by 1`, [role],
       )).map((r) => r.f);
       eq(JSON.stringify(got), JSON.stringify(ALLOW[role]), `allowlist EXECUTE ${role}`);
     }
-    return `${fns.length} fungsi iam/app terkunci; allowlist 3 role runtime cocok persis`;
+    return `${fns.length} fungsi iam/app/biz terkunci; allowlist 3 role runtime cocok persis`;
   });
 
   await test("T-DB-05", K, "FK komposit menolak referensi lintas toko (termasuk oleh superuser)", async () => {
