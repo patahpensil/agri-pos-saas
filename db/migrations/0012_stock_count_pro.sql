@@ -403,6 +403,8 @@ begin
 end $$;
 
 reset role;
+-- Hak bawaan PUBLIC atas helper baru juga harus dicabut; runtime hanya memakai tiga fungsi publik yang ditetapkan.
+revoke execute on all functions in schema app from public;
 revoke execute on function app.count_create(uuid,jsonb),app.count_list(),app.count_approve(uuid,uuid,jsonb)
  from public;
 grant execute on function app.count_create(uuid,jsonb),app.count_list(),app.count_approve(uuid,uuid,jsonb)
