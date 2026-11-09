@@ -57,6 +57,13 @@ export async function fefoTests(): Promise<void> {
     const batch = await admin<{ id: string; batch_number: string }>(
       "select id,batch_number from biz.batch where tenant_id=$1 and product_id=$2", [A.tenant, productId]);
     const early = batch.find((b) => b.batch_number === "B-EARLY")!.id;
+    // Skenario negatif untuk mutant FEFO_GUARD: stok karantina dengan expiry masih aman
+    // tidak boleh muncul sekalipun status=SALEABLE sengaja dihapus dari query.
+    await asActor(A.token, "select app.inventory_receive($1,$2::jsonb) as r",
+      [uuid(), JSON.stringify({ productId, supplierName: "Pemasok Karantina",
+        lines: [{ packageId: pkg, qty: 1, status: "QUARANTINE",
+          batch: { number: "Q-CLEAR", expiresOn: future(15) },
+          cost: { basis: "KNOWN", totalIdr: 100 } }] })]);
     const locB = (await admin<{ id: string }>("select id from platform.location where tenant_id=$1 limit 1", [B.tenant]))[0].id;
     const path = `/inventory/fefo?productId=${productId}`;
 
