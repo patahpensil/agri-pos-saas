@@ -119,6 +119,23 @@ jobs:
           TEST_RESULTS_DIR: results
         run: node dist/test/run.js
 
+      # Kontrol positif: ID ini harus PASS saat dijalankan SENDIRI pada skema asli.
+      # Tanpa ini, mutant bisa tampak terdeteksi hanya karena fixture uji hilang.
+      - name: Validasi uji COUNT-03 mandiri sebelum mutasi
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_SUITES: count
+          TEST_ONLY_IDS: COUNT-03
+          TEST_RESULTS_DIR: results/isolated-count
+        run: node dist/test/run.js
+
       - name: Uji mutasi terisolasi (kontrol dihapus -> uji terkait wajib FAIL)
         if: always()
         env:
