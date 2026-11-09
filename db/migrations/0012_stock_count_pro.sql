@@ -350,7 +350,7 @@ begin
     order by x.package_version_id,x.batch_id loop
    if app.hold_active(a.tenant_id,c.location_id,c.product_id,l.batch_id) then
       raise exception 'HOLD_ACTIVE' using errcode='P0001'; end if;
-   select coalesce(b.qty,0) into v_qty from biz.stock_balance b
+   select coalesce((select b.qty from biz.stock_balance b
     where b.tenant_id=a.tenant_id and b.location_id=c.location_id and b.product_id=c.product_id
       and b.package_version_id=l.package_version_id and b.batch_id=l.batch_id and b.status='SALEABLE'),0) into v_qty;
    v_after:=app.count_movement_after(a.tenant_id,c.location_id,c.product_id,l.package_version_id,l.batch_id,c.counted_at);
