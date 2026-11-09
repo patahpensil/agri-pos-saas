@@ -4,8 +4,8 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import {
-  ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, RUNTIME_HOST, RUNTIME_PORT,
-  TEST_OTP_MAC_KEY, admin, asActor, eq, errOf, harnessSender, ok, registerOwnerSql, test,
+  DBNAME, RUNTIME_HOST, RUNTIME_PORT,
+  TEST_OTP_MAC_KEY, admin, asActor, eq, harnessSender, ok, registerOwnerSql, test,
 } from "./harness";
 
 type Json = Record<string, unknown>;
