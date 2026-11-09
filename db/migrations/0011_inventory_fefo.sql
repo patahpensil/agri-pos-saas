@@ -39,11 +39,12 @@ begin
       join biz.batch bt
         on bt.tenant_id = b.tenant_id and bt.product_id = b.product_id and bt.id = b.batch_id
      where b.tenant_id = a.tenant_id
-       and b.product_id = p_product and b.status = 'SALEABLE' and b.qty > 0
+       and b.product_id = p_product and b.qty > 0
+       and b.status = 'SALEABLE' -- @kontrol:FEFO_GUARD
        and (p_location is null or b.location_id = p_location)
        and (p_package is null or b.package_version_id = p_package)
        and (bt.expires_on is null or bt.expires_on >= v_today)
-       and not app.hold_active(a.tenant_id, b.location_id, b.product_id, b.batch_id) -- @kontrol:FEFO_GUARD
+       and not app.hold_active(a.tenant_id, b.location_id, b.product_id, b.batch_id)
      order by bt.expires_on asc nulls last, bt.batch_number asc nulls last,
               b.batch_id, b.package_version_id, b.location_id
      limit p_limit
