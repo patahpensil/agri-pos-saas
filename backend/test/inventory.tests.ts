@@ -663,6 +663,279 @@ export async function inventoryTests(): Promise<void> {
       return "fungsi DB & insert superuser (expiry beda/kosong) -> BATCH_EXPIRY_MISMATCH; ubah expiry/nomor -> IMMUTABLE_FIELD; expiry asli 2030-12-31 utuh; indeks unik ada";
     });
 
+    // ------------------------------------------------------------------ INV-AUD-04: ke SALEABLE wajib reautentikasi terikat isi
+    // Kondisi awal tiap skenario: pestisida B-01 (41 botol siap jual Rp4.100.000), lalu Owner memindah N botol ke karantina.
+    async function quarantined(token: string, qty = 5): Promise<{ p: Prod; b: string }> {
+      const p = await pesticide(token);
+      const b = await batchId(p.id, "B-01");
+      const m = await move(token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "SALEABLE", to: "QUARANTINE", qty, reason: "karantina uji" });
+      if (m.status !== 201) throw new Error(`siapkan karantina: ${m.text}`);
+      return { p, b };
+    }
+    type MoveBody = { productId: string; packageId: string; batchId: string; from: string; to: string; qty: number; reason: string; [k: string]: unknown };
+    const mvBody = (p: Prod, b: string, o: Record<string, unknown> = {}): MoveBody =>
+      ({ productId: p.id, packageId: p.pkg.botol, batchId: b, from: "QUARANTINE", to: "SALEABLE", qty: 2, reason: "lolos pemeriksaan", ...o });
+    const scopeOf = (m: MoveBody) => ({ productId: m.productId, packageId: m.packageId, batchId: m.batchId, from: m.from, to: m.to, qty: m.qty });
+    const moveReauth = (t: string, m: MoveBody, password = PW) =>
+      http("POST", "/auth/reauth", t, { password, action: "inventory.move", targetId: m.batchId, scope: scopeOf(m) });
+    async function token(t: string, m: MoveBody): Promise<string> {
+      const g = await moveReauth(t, m);
+      if (g.status !== 201) throw new Error(`reauth pindah: ${g.text}`);
+      return g.body.reauthToken as string;
+    }
+    // Keadaan stok/nilai/ledger satu produk (untuk membuktikan penolakan tidak mengubah apa pun).
+    const snap = async (pid: string) => JSON.stringify(await admin(
+      `select (select string_agg(status||':'||batch_id||':'||package_version_id||':'||qty, ',' order by status, batch_id, package_version_id) from biz.stock_balance where product_id=$1) bal,
+              (select string_agg(status||':'||qty_base||':'||value_idr, ',' order by status) from biz.cost_pool where product_id=$1) pool,
+              (select count(*) from biz.inventory_ledger where product_id=$1)::int led, (select count(*) from biz.value_ledger where product_id=$1)::int vl,
+              (select count(*) from biz.inventory_event where product_id=$1)::int ev`, [pid]));
+    const usedOf = async (tok: string) => (await admin<{ u: boolean | null }>("select used_at is not null u from iam.reauth_grant where token_hash = sha256(decode($1,'hex'))", [tok]))[0]?.u ?? null;
+    const isReauthReq = (r: Res) => r.status === 403 && r.body.code === "REAUTH_REQUIRED";
+
+    await test("INV-AUD-04-A", KA, "Owner memindah QUARANTINE -> SALEABLE tanpa reautentikasi -> ditolak; stok/nilai/ledger tetap", async () => {
+      const { p, b } = await quarantined(A.token);
+      const s0 = await snap(p.id);
+      const r = await move(A.token, mvBody(p, b));
+      ok(isReauthReq(r), `${r.status} ${String(r.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      return "403 REAUTH_REQUIRED; saldo, kolam nilai, ledger, event identik";
+    });
+
+    await test("INV-AUD-04-B", KA, "Token reautentikasi palsu -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const s0 = await snap(p.id);
+      const r = await move(A.token, mvBody(p, b, { reauthToken: "cd".repeat(32) }));
+      ok(isReauthReq(r), `${r.status} ${String(r.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      return "403 REAUTH_REQUIRED; keadaan identik";
+    });
+
+    await test("INV-AUD-04-C", KA, "Token kedaluwarsa -> ditolak dan tidak terpakai", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const tok = await token(A.token, m);
+      await sleep(5_600);   // reauth_ttl_seconds uji = 5 (TEST_ONLY)
+      const s0 = await snap(p.id);
+      const r = await move(A.token, { ...m, reauthToken: tok });
+      ok(isReauthReq(r), `${r.status} ${String(r.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      eq(await usedOf(tok), false, "token tidak ditandai terpakai");
+      return "403 REAUTH_REQUIRED setelah 5,6 dtk; keadaan identik";
+    });
+
+    await test("INV-AUD-04-D", KA, "Token yang sudah dipakai -> ditolak pada pemakaian kedua (walau stok masih cukup)", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const tok = await token(A.token, m);
+      const r1 = await move(A.token, { ...m, reauthToken: tok });
+      eq(r1.status, 201, r1.text);
+      const s0 = await snap(p.id);
+      const r2 = await move(A.token, { ...m, reauthToken: tok });
+      ok(isReauthReq(r2), `pemakaian kedua: ${r2.status} ${String(r2.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      return "pertama 201; kedua (kunci idempotensi baru) 403 REAUTH_REQUIRED; keadaan identik";
+    });
+
+    await test("INV-AUD-04-E", KA, "Token untuk isi perpindahan lain (jumlah, batch/produk, asal, aksi lain) -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const other = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const s0 = await snap(p.id);
+      const s1 = await snap(other.p.id);
+      const tQty = await token(A.token, m);
+      const rQty = await move(A.token, { ...m, qty: 3, reauthToken: tQty });
+      const tBatch = await token(A.token, m);
+      const rBatch = await move(A.token, { ...mvBody(other.p, other.b), reauthToken: tBatch });
+      const tFrom = await token(A.token, { ...m, from: "INSPECTION" });
+      const rFrom = await move(A.token, { ...m, reauthToken: tFrom });
+      const relTok = (await reauth(A.token, b)).body.reauthToken as string;
+      const rAct = await move(A.token, { ...m, reauthToken: relTok });
+      const bad = [["jumlah", rQty], ["batch/produk", rBatch], ["asal", rFrom], ["aksi lain", rAct]].filter(([, r]) => !isReauthReq(r as Res))
+        .map(([n, r]) => `${String(n)}: ${(r as Res).status} ${String((r as Res).body.code)}`);
+      ok(bad.length === 0, bad.join("; "));
+      ok(await snap(p.id) === s0 && await snap(other.p.id) === s1, "keadaan berubah");
+      ok((await usedOf(tQty)) === false && (await usedOf(tBatch)) === false, "token ditandai terpakai padahal ditolak");
+      return "jumlah 2->3, batch/produk lain, asal INSPECTION vs QUARANTINE, token pelepasan -> semua 403; dua produk identik";
+    });
+
+    await test("INV-AUD-04-F", KA, "Token dari toko lain atau sesi lain -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const s0 = await snap(p.id);
+      const tB = await token(B.token, m);   // Owner toko B mengotorisasi isi yang sama (milik toko A)
+      const rB = await move(A.token, { ...m, reauthToken: tB });
+      ok(isReauthReq(rB), `token toko lain: ${rB.status} ${String(rB.body.code)}`);
+      const rBself = await move(B.token, { ...m, reauthToken: tB });
+      eq(rBself.status, 404, "toko B tidak bisa memindah stok toko A");
+      eq(await snap(p.id), s0, "keadaan");
+      const O = await registerOwnerSql("Kios Reauth Sesi");
+      const q = await quarantined(O.token);
+      const mo = mvBody(q.p, q.b);
+      const tOld = await token(O.token, mo);
+      const [l] = await asRole<{ r_status: string; r_token: string }>("auth_runtime", "select * from iam.login($1,$2,$3)", [O.phone, PW, "dev-sesi-lain-456"]);
+      eq(l.r_status, "OK", "login sesi baru");
+      const s2 = await snap(q.p.id);
+      const rS = await move(l.r_token, { ...mo, reauthToken: tOld });
+      ok(isReauthReq(rS), `token sesi lain: ${rS.status} ${String(rS.body.code)}`);
+      eq(await snap(q.p.id), s2, "keadaan sesi");
+      return "token toko B dipakai di toko A -> 403; toko B ke stok A -> 404; token sesi lama di sesi baru -> 403; keadaan identik";
+    });
+
+    await test("INV-AUD-04-G", KA, "Admin mencoba mengembalikan stok ke SALEABLE (API, reautentikasi, SQL langsung) -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const s0 = await snap(p.id);
+      const r1 = await move(ADM.token, m);
+      const r2 = await moveReauth(ADM.token, m);
+      const tOwner = await token(A.token, m);
+      const r3 = await move(ADM.token, { ...m, reauthToken: tOwner });
+      const e4 = await errOf(asActor(ADM.token, "select app.stock_move($1, $2::jsonb)", [randomUUID(), JSON.stringify({ ...m, reauthToken: tOwner })]));
+      ok([r1, r2, r3].every((r) => r.status === 403 && r.body.code === "FORBIDDEN_ROLE") && e4 === "FORBIDDEN_ROLE",
+         `${[r1, r2, r3].map((r) => `${r.status}:${String(r.body.code)}`).join(",")} | ${e4}`);
+      eq(await snap(p.id), s0, "keadaan");
+      eq(await usedOf(tOwner), false, "token Owner tidak terpakai oleh Admin");
+      return "Admin pindah/reauth/pakai token Owner/SQL langsung -> FORBIDDEN_ROLE; keadaan identik";
+    });
+
+    await test("INV-AUD-04-H", KA, "Owner dengan reautentikasi sah, barang layak, perpindahan QUARANTINE -> SALEABLE -> berhasil; nilai, ledger, audit konsisten", async () => {
+      const { p, b } = await quarantined(A.token);
+      const before = await pools(p.id);
+      const m = mvBody(p, b, { referenceDocument: "BA-Periksa-07" });
+      const tok = await token(A.token, m);
+      const r = await move(A.token, { ...m, reauthToken: tok });
+      eq(r.status, 201, r.text);
+      const after = await pools(p.id);
+      const expVal = Math.floor(before.QUARANTINE.v * 2 / before.QUARANTINE.q);
+      ok(Number(r.body.valueMovedIdr) === expVal && after.QUARANTINE.q === 3 && after.QUARANTINE.v === before.QUARANTINE.v - expVal
+         && after.SALEABLE.q === before.SALEABLE.q + 2 && after.SALEABLE.v === before.SALEABLE.v + expVal, `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+      ok(sumPools(after).q === 41 && sumPools(after).v === 4_100_000, "total nilai berubah");
+      const [x] = await admin<{ led: number; s: string; vs: string; d: Record<string, string>; gid: string; used: boolean }>(
+        `select (select count(*)::int from biz.inventory_ledger where event_id=$1) led, (select sum(qty_base_delta)::text from biz.inventory_ledger where event_id=$1) s,
+                (select sum(value_delta)::text from biz.value_ledger where event_id=$1 and cost_basis='MOVE') vs,
+                (select detail from biz.audit_event where entity_id=$1 and kind='STOCK_STATUS_MOVED') d,
+                (select id::text from iam.reauth_grant where token_hash = sha256(decode($2,'hex'))) gid,
+                (select used_at is not null from iam.reauth_grant where token_hash = sha256(decode($2,'hex'))) used`, [r.body.eventId, tok]);
+      ok(x.led === 2 && x.s === "0" && x.vs === "0" && x.used === true, JSON.stringify(x));
+      ok(x.d.reason === "lolos pemeriksaan" && x.d.referenceDocument === "BA-Periksa-07" && x.d.reauthGrantId === x.gid && x.d.from === "QUARANTINE", `audit: ${JSON.stringify(x.d)}`);
+      return `201; nilai pindah Rp${expVal} (floor); karantina 3, total 41 botol/Rp4.100.000; 2 baris ledger seimbang; audit memuat alasan, dokumen, id bukti; token terpakai`;
+    });
+
+    await test("INV-AUD-04-I", KA, "Batch kedaluwarsa dengan token sah -> ditolak, token tidak terpakai", async () => {
+      const p = await pesticide(A.token);
+      const r0 = await receive(A.token, { productId: p.id, lines: [line(p.pkg.botol, 3, { status: "QUARANTINE", batch: { number: "EXP-9", expiresOn: "2020-06-30" } })] });
+      eq(r0.status, 201, r0.text);
+      const be = await batchId(p.id, "EXP-9");
+      const m = mvBody(p, be);
+      const tok = await token(A.token, m);
+      const s0 = await snap(p.id);
+      const r = await move(A.token, { ...m, reauthToken: tok });
+      ok(r.status === 400 && r.body.code === "BATCH_EXPIRED", `${r.status} ${String(r.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      eq(await usedOf(tok), false, "token tidak terpakai");
+      return "400 BATCH_EXPIRED; keadaan identik; token tetap belum terpakai";
+    });
+
+    await test("INV-AUD-04-J", KA, "Batch masih ditahan dengan token sah -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const h = await hold(ADM.token, { productId: p.id, batchId: b, reason: "dicurigai" });
+      eq(h.status, 201, h.text);
+      const m = mvBody(p, b);
+      const tok = await token(A.token, m);
+      const s0 = await snap(p.id);
+      const r = await move(A.token, { ...m, reauthToken: tok });
+      ok(r.status === 409 && r.body.code === "HOLD_ACTIVE", `${r.status} ${String(r.body.code)}`);
+      eq(await snap(p.id), s0, "keadaan");
+      eq(await usedOf(tok), false, "token tidak terpakai");
+      return "409 HOLD_ACTIVE; keadaan identik";
+    });
+
+    await test("INV-AUD-04-K", KA, "HELD -> SALEABLE lewat status-moves ditolak (wajib jalur pelepasan); DAMAGED tidak bisa dikeluarkan; jalan memutar ditutup", async () => {
+      const p = await pesticide(A.token);
+      const b = await batchId(p.id, "B-01");
+      const prep = [
+        await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "SALEABLE", to: "HELD", qty: 2, reason: "tahan manual" }),
+        await move(A.token, { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "SALEABLE", to: "DAMAGED", qty: 2, reason: "pecah" }),
+      ];
+      ok(prep.every((r) => r.status === 201), prep.map((r) => r.text).join(" | "));
+      const s0 = await snap(p.id);
+      const base = { productId: p.id, packageId: p.pkg.botol, batchId: b, qty: 1, reason: "coba" };
+      const held = await move(A.token, { ...base, from: "HELD", to: "SALEABLE" });
+      const heldR = await http("POST", "/auth/reauth", A.token, { password: PW, action: "inventory.move", targetId: b, scope: { productId: p.id, packageId: p.pkg.botol, batchId: b, from: "HELD", to: "SALEABLE", qty: 1 } });
+      const heldSql = await errOf(asActor(A.token, "select app.reauth_start($1,'inventory.move',$2,$3::jsonb)", [PW, b, JSON.stringify({ productId: p.id, packageId: p.pkg.botol, batchId: b, from: "HELD", to: "SALEABLE", qty: 1 })]));
+      const dmg = await move(A.token, { ...base, from: "DAMAGED", to: "SALEABLE" });
+      const dmgQ = await move(A.token, { ...base, from: "DAMAGED", to: "QUARANTINE" });
+      const heldQ = await move(A.token, { ...base, from: "HELD", to: "QUARANTINE" });
+      ok(held.status === 409 && held.body.code === "HELD_RELEASE_REQUIRED", `HELD->SALEABLE: ${held.status} ${String(held.body.code)}`);
+      ok(heldR.status === 400 && heldSql === "VALIDATION", `token untuk HELD: ${heldR.status} / ${heldSql}`);
+      ok([dmg, dmgQ, heldQ].every((r) => r.status === 409 && r.body.code === "STATUS_MOVE_NOT_ALLOWED"), [dmg, dmgQ, heldQ].map((r) => `${r.status}:${String(r.body.code)}`).join(","));
+      eq(await snap(p.id), s0, "keadaan");
+      return "HELD->SALEABLE 409 HELD_RELEASE_REQUIRED; token untuk HELD tidak bisa diterbitkan (API 400, DB VALIDATION); DAMAGED->SALEABLE, DAMAGED->QUARANTINE, HELD->QUARANTINE 409; keadaan identik";
+    });
+
+    await test("INV-AUD-04-L", KD, "Dua perpindahan bersamaan (token berbeda & token sama) tidak menggandakan stok atau nilai", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m3 = mvBody(p, b, { qty: 3 });
+      const [t1, t2] = [await token(A.token, m3), await token(A.token, m3)];
+      const call = (body: unknown) => errOf(asActor(A.token, "select app.stock_move($1, $2::jsonb)", [randomUUID(), JSON.stringify(body)]));
+      const r = await Promise.all([call({ ...m3, reauthToken: t1 }), call({ ...m3, reauthToken: t2 })]);
+      ok(r.filter((x) => x === "OK").length === 1 && r.filter((x) => x === "INSUFFICIENT_STOCK").length === 1, `token berbeda: ${r.join(",")}`);
+      const m1 = mvBody(p, b, { qty: 1 });
+      const t3 = await token(A.token, m1);
+      const r2 = await Promise.all([call({ ...m1, reauthToken: t3 }), call({ ...m1, reauthToken: t3 })]);
+      ok(r2.filter((x) => x === "OK").length === 1 && r2.filter((x) => x === "REAUTH_REQUIRED").length === 1, `token sama: ${r2.join(",")}`);
+      const pl = await pools(p.id);
+      const rs = await rows(A.token, p.id);
+      ok(pl.QUARANTINE.q === 1 && pl.SALEABLE.q === 40 && sumPools(pl).q === 41 && sumPools(pl).v === 4_100_000 && rs.every((x) => x.qty >= 0),
+         `${JSON.stringify(pl)} ${JSON.stringify(rs.map((x) => [x.status, x.qty]))}`);
+      return "token berbeda: 1 OK + 1 INSUFFICIENT_STOCK; token sama: 1 OK + 1 REAUTH_REQUIRED; karantina 1, siap jual 40, total 41/Rp4.100.000, tidak negatif";
+    });
+
+    await test("INV-AUD-04-M", KA, "Retry dengan Idempotency-Key & isi identik -> hasil sama, tanpa ledger ganda", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const tok = await token(A.token, m);
+      const key = randomUUID();
+      const r1 = await move(A.token, { ...m, reauthToken: tok }, key);
+      const s1 = await snap(p.id);
+      const r2 = await move(A.token, { ...m, reauthToken: tok }, key);
+      eq(r1.status, 201, r1.text);
+      ok(r2.status === 201 && r2.body.eventId === r1.body.eventId && r2.body.replayed === true, `ulang: ${r2.text}`);
+      eq(await snap(p.id), s1, "tidak ada ledger/nilai ganda");
+      return "ulang -> 201 replayed, eventId sama; ledger & nilai tidak bertambah";
+    });
+
+    await test("INV-AUD-04-N", KA, "Idempotency-Key sama dengan isi berbeda -> ditolak", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const tok = await token(A.token, m);
+      const key = randomUUID();
+      const r1 = await move(A.token, { ...m, reauthToken: tok }, key);
+      eq(r1.status, 201, r1.text);
+      const s1 = await snap(p.id);
+      const tok2 = await token(A.token, { ...m, qty: 1 });
+      const r2 = await move(A.token, { ...m, qty: 1, reauthToken: tok2 }, key);
+      ok(r2.status === 409 && r2.body.code === "IDEMPOTENCY_PAYLOAD_MISMATCH", `${r2.status} ${String(r2.body.code)}`);
+      eq(await snap(p.id), s1, "keadaan");
+      eq(await usedOf(tok2), false, "token kedua tidak terpakai");
+      return "409 IDEMPOTENCY_PAYLOAD_MISMATCH; keadaan identik";
+    });
+
+    await test("INV-AUD-04-O", KD, "Pemanggilan SQL langsung tanpa/dengan token palsu -> ditolak database; runtime tak bisa memanggil fungsi konsumsi", async () => {
+      const { p, b } = await quarantined(A.token);
+      const m = mvBody(p, b);
+      const s0 = await snap(p.id);
+      const call = (body: unknown) => errOf(asActor(A.token, "select app.stock_move($1, $2::jsonb)", [randomUUID(), JSON.stringify(body)]));
+      const e1 = await call(m);
+      const e2 = await call({ ...m, reauthToken: "00".repeat(32) });
+      const e3 = await call({ ...m, reauthToken: "bukan-token" });
+      ok(e1 === "REAUTH_REQUIRED" && e2 === "REAUTH_REQUIRED" && e3 === "REAUTH_REQUIRED", `${e1} | ${e2} | ${e3}`);
+      const [fx] = await admin<{ c: boolean; h: boolean }>(
+        "select has_function_privilege('app_runtime','iam.reauth_consume_scope(text,text,uuid,jsonb)','EXECUTE') c, has_function_privilege('app_runtime','iam.reauth_scope_hash(text,jsonb)','EXECUTE') h");
+      ok(!fx.c && !fx.h, JSON.stringify(fx));
+      eq(await snap(p.id), s0, "keadaan");
+      return "tanpa token / token nol / format salah -> REAUTH_REQUIRED (database); runtime tanpa EXECUTE fungsi konsumsi; keadaan identik";
+    });
+
     // ------------------------------------------------------------------ isolasi, atomik, append-only, hak
     await test("INV-TENANT-01", KA, "Toko B tidak bisa menerima, membuka, menahan, memindah, atau melepas objek toko A", async () => {
       const p = await pesticide(A.token);

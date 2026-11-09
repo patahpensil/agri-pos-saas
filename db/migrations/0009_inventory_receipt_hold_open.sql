@@ -18,6 +18,8 @@
 --    terikat ke sesi, aksi, dan penahanan; berlaku singkat (parameter reauth_ttl_seconds); sekali pakai.
 --  * INV-AUD-02: pemasok WAJIB pada setiap penerimaan (INV-01 "beserta pemasok"); dokumen tetap "jika tersedia".
 --  * INV-AUD-03: nomor batch per produk hanya punya SATU tanggal kedaluwarsa; expiry batch tidak bisa diubah.
+--  * INV-AUD-04: pindah status ke SALEABLE (dari INSPECTION/QUARANTINE saja) wajib reautentikasi Owner yang
+--    terikat pada isi perpindahan; HELD hanya lewat pelepasan; DAMAGED tidak bisa dikeluarkan lewat stock_move.
 --
 -- Penanda uji mutasi: "-- @kontrol:NAMA" (dihapus saat mutasi), "-- @mutasi:NAMA " (diaktifkan).
 
@@ -166,8 +168,9 @@ create table iam.reauth_grant (
   id         uuid not null default gen_random_uuid(),
   user_id    uuid not null references iam.user_account (id),
   session_id uuid not null,
-  action     text not null check (action in ('inventory.release')),
+  action     text not null check (action in ('inventory.release', 'inventory.move')),
   target_id  uuid not null,
+  scope_hash bytea check (scope_hash is null or octet_length(scope_hash) = 32),  -- INV-AUD-04: isi perubahan yang disetujui
   token_hash bytea not null unique check (octet_length(token_hash) = 32),
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
@@ -181,9 +184,9 @@ create function iam.reauth_grant_guard() returns trigger
 language plpgsql set search_path = pg_catalog, pg_temp as $$
 begin
   if tg_op <> 'UPDATE' or old.used_at is not null or new.used_at is null
-     or (new.tenant_id, new.id, new.user_id, new.session_id, new.action, new.target_id, new.token_hash, new.created_at, new.expires_at)
+     or (new.tenant_id, new.id, new.user_id, new.session_id, new.action, new.target_id, new.scope_hash, new.token_hash, new.created_at, new.expires_at)
         is distinct from
-        (old.tenant_id, old.id, old.user_id, old.session_id, old.action, old.target_id, old.token_hash, old.created_at, old.expires_at) then
+        (old.tenant_id, old.id, old.user_id, old.session_id, old.action, old.target_id, old.scope_hash, old.token_hash, old.created_at, old.expires_at) then
     raise exception 'APPEND_ONLY' using errcode = 'P0001';
   end if;
   return new;
@@ -204,19 +207,50 @@ create policy auth_boundary on iam.reauth_grant for all to auth_fn_owner using (
 -- ------------------------------------------------------------------ reautentikasi Owner (INV-AUD-01)
 set role auth_fn_owner;
 
+-- (INV-AUD-04) Sidik jari isi perubahan yang disetujui. Untuk 'inventory.move' hanya perpindahan ke SALEABLE dari
+-- INSPECTION/QUARANTINE yang bisa diotorisasi; produk, kemasan, batch, asal, tujuan, jumlah, dan lokasi (bila
+-- disebut) ikut di-hash, sehingga token tidak bisa dipakai untuk perpindahan lain. 'inventory.release' tanpa isi.
+create function iam.reauth_scope_hash(p_action text, p_scope jsonb) returns bytea
+language plpgsql immutable set search_path = pg_catalog, pg_temp as $$
+begin
+  if p_action = 'inventory.release' then
+    if p_scope is not null then
+      raise exception 'VALIDATION' using errcode = 'P0001';
+    end if;
+    return null;
+  end if;
+  if p_action = 'inventory.move' then
+    if p_scope is null or pg_catalog.jsonb_typeof(p_scope) <> 'object' or p_scope->>'to' is distinct from 'SALEABLE'
+       or coalesce(p_scope->>'from', '') not in ('INSPECTION', 'QUARANTINE')
+       or p_scope->>'productId' is null or p_scope->>'packageId' is null or p_scope->>'batchId' is null
+       or p_scope->>'qty' is null or (p_scope->>'qty')::bigint <= 0 then
+      raise exception 'VALIDATION' using errcode = 'P0001';
+    end if;
+    return pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_object(
+      'productId', (p_scope->>'productId')::uuid, 'packageId', (p_scope->>'packageId')::uuid,
+      'batchId', (p_scope->>'batchId')::uuid, 'from', p_scope->>'from', 'to', p_scope->>'to',
+      'qty', (p_scope->>'qty')::bigint, 'locationId', (p_scope->>'locationId')::uuid)::text, 'UTF8'));
+  end if;
+  raise exception 'VALIDATION' using errcode = 'P0001';
+end $$;
+
 -- POST /auth/reauth: Owner memasukkan ulang sandi untuk SATU aksi pada SATU objek. Sandi diperiksa di database
 -- (bcrypt). Percobaan gagal dibatasi per akun dengan parameter login yang sudah ada (login_max_failures,
 -- login_window_seconds); hasil gagal dikembalikan sebagai status (bukan exception) agar penghitung ikut tersimpan.
-create function iam.reauth_issue(p_password text, p_action text, p_target uuid) returns jsonb
+create function iam.reauth_issue(p_password text, p_action text, p_target uuid, p_scope jsonb default null) returns jsonb
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare a record; v_h bytea; v_n integer; v_win bigint := iam.param('login_window_seconds'); v_pw text;
-        v_tok bytea; v_exp timestamptz;
+        v_tok bytea; v_exp timestamptz; v_scope bytea;
 begin
   select * into a from iam.current_actor();
   if a.role is distinct from 'OWNER' then
     raise exception 'FORBIDDEN_ROLE' using errcode = 'P0001';
   end if;
-  if p_action is null or p_action not in ('inventory.release') or p_target is null then
+  if p_action is null or p_action not in ('inventory.release', 'inventory.move') or p_target is null then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  v_scope := iam.reauth_scope_hash(p_action, p_scope);
+  if p_action = 'inventory.move' and (p_scope->>'batchId')::uuid <> p_target then
     raise exception 'VALIDATION' using errcode = 'P0001';
   end if;
   v_h := pg_catalog.sha256(pg_catalog.convert_to('reauth:' || a.user_id::text, 'UTF8'));
@@ -233,15 +267,15 @@ begin
   perform iam.rate_release('REAUTH_FAIL', v_h, v_win);
   v_tok := ext.gen_random_bytes(32);
   v_exp := pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => iam.param('reauth_ttl_seconds'));
-  insert into iam.reauth_grant (tenant_id, user_id, session_id, action, target_id, token_hash, expires_at)
-  values (a.tenant_id, a.user_id, a.session_id, p_action, p_target, pg_catalog.sha256(v_tok), v_exp);
+  insert into iam.reauth_grant (tenant_id, user_id, session_id, action, target_id, scope_hash, token_hash, expires_at)
+  values (a.tenant_id, a.user_id, a.session_id, p_action, p_target, v_scope, pg_catalog.sha256(v_tok), v_exp);
   perform iam.audit(a.tenant_id, a.user_id, 'REAUTH_OK', pg_catalog.jsonb_build_object('action', p_action, 'target', p_target));
   return pg_catalog.jsonb_build_object('status', 'OK', 'reauthToken', pg_catalog.encode(v_tok, 'hex'), 'expiresAt', v_exp);
 end $$;
 
 -- Dipanggil fungsi aksi sensitif (bukan runtime). Bukti sah hanya bila: milik pengguna & sesi yang sama,
 -- aksi & objek sama, belum kedaluwarsa, belum dipakai. Semua kegagalan memakai satu kode (tidak membocorkan alasan).
-create function iam.reauth_consume(p_token text, p_action text, p_target uuid) returns void
+create function iam.reauth_consume_scope(p_token text, p_action text, p_target uuid, p_scope jsonb) returns uuid
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare a record; g record;
 begin
@@ -251,7 +285,8 @@ begin
   end if;
   select r.* into g from iam.reauth_grant r where r.token_hash = pg_catalog.sha256(pg_catalog.decode(p_token, 'hex')) for update;
   if g.id is null or g.tenant_id <> a.tenant_id or g.user_id <> a.user_id or g.session_id <> a.session_id
-     or g.action <> p_action or g.target_id <> p_target then
+     or g.action <> p_action or g.target_id <> p_target
+     or g.scope_hash is distinct from iam.reauth_scope_hash(p_action, p_scope) then
     raise exception 'REAUTH_REQUIRED' using errcode = 'P0001';
   end if;
   if g.expires_at <= pg_catalog.clock_timestamp() then                                      -- @kontrol:REAUTH_EXPIRY
@@ -261,6 +296,14 @@ begin
     raise exception 'REAUTH_REQUIRED' using errcode = 'P0001';                              -- @kontrol:REAUTH_SINGLE_USE
   end if;                                                                                   -- @kontrol:REAUTH_SINGLE_USE
   update iam.reauth_grant r set used_at = pg_catalog.clock_timestamp() where r.tenant_id = g.tenant_id and r.id = g.id;  -- @kontrol:REAUTH_SINGLE_USE
+  return g.id;
+end $$;
+
+-- Pelepasan penahanan (INV-AUD-01): tanpa isi tambahan.
+create function iam.reauth_consume(p_token text, p_action text, p_target uuid) returns void
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
+begin
+  perform iam.reauth_consume_scope(p_token, p_action, p_target, null);
 end $$;
 
 -- Daftar parameter keamanan wajib (produksi menolak start bila ada yang kosong/test_only) + reauth_ttl_seconds.
@@ -276,8 +319,10 @@ language sql stable security definer set search_path = pg_catalog, pg_temp as $$
     left join iam.security_param sp on sp.key = k.key
 $$;
 reset role;
-revoke execute on function iam.reauth_issue(text, text, uuid), iam.reauth_consume(text, text, uuid) from public;
-grant execute on function iam.reauth_issue(text, text, uuid), iam.reauth_consume(text, text, uuid) to app_fn_owner;
+revoke execute on function iam.reauth_issue(text, text, uuid, jsonb), iam.reauth_consume(text, text, uuid),
+  iam.reauth_consume_scope(text, text, uuid, jsonb), iam.reauth_scope_hash(text, jsonb) from public;
+grant execute on function iam.reauth_issue(text, text, uuid, jsonb), iam.reauth_consume(text, text, uuid),
+  iam.reauth_consume_scope(text, text, uuid, jsonb) to app_fn_owner;
 grant select, insert, update on biz.stock_hold to app_fn_owner;
 do $$
 declare t text;
@@ -631,12 +676,19 @@ begin
 end $$;
 
 -- ------------------------------------------------------------------ POST /inventory/status-moves (Owner)
--- Pindah status fisik (mis. siap jual -> karantina/rusak, pemeriksaan -> siap jual). Nilai ikut pindah.
+-- Pindah status fisik. Nilai ikut pindah. Matriks perpindahan (INV-AUD-04, fail-closed):
+--   SALEABLE   -> INSPECTION | HELD | QUARANTINE | DAMAGED      (makin ketat; Owner)
+--   INSPECTION -> QUARANTINE | HELD | DAMAGED; -> SALEABLE hanya dengan reautentikasi Owner terikat isi
+--   QUARANTINE -> HELD | DAMAGED;              -> SALEABLE hanya dengan reautentikasi Owner terikat isi ("lepas karantina")
+--   HELD       -> DAMAGED; ke SALEABLE WAJIB lewat pelepasan penahanan (stock_release)
+--   DAMAGED    -> (tidak ada; prosedur pemusnahan/retur pemasok belum disahkan)
+-- Perpindahan lain ditolak STATUS_MOVE_NOT_ALLOWED agar tidak ada jalan memutar (mis. DAMAGED -> QUARANTINE -> SALEABLE).
 create function app.stock_move(p_key uuid, p_body jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare
   a record; v_prev jsonb; v_pid uuid; v_loc uuid; pk record; bt record; v_from text; v_to text; v_qty integer;
   v_event uuid; v_now timestamptz := pg_catalog.clock_timestamp(); v_val bigint; v_resp jsonb; v_reason text;
+  v_grant uuid; v_ref text;
 begin
   select * into a from iam.current_actor();
   perform app.inv_require_active(a.effective_status);
@@ -669,13 +721,30 @@ begin
   if bt.id is null then
     raise exception 'BATCH_INVALID' using errcode = 'P0001';
   end if;
+  v_ref := p_body->>'referenceDocument';
+  if v_ref is not null and pg_catalog.char_length(pg_catalog.btrim(v_ref)) not between 1 and 120 then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
   if v_to = 'SALEABLE' then
+    -- Syarat barang tetap berlaku walau token reautentikasi sah.
     if bt.expires_on is not null and bt.expires_on < app.tenant_today(a.tenant_id) then
       raise exception 'BATCH_EXPIRED' using errcode = 'P0001';
     end if;
     if app.hold_active(a.tenant_id, v_loc, v_pid, bt.id) then
       raise exception 'HOLD_ACTIVE' using errcode = 'P0001';
     end if;
+    if v_from = 'HELD' then                                                                   -- @kontrol:MOVE_TRANSITION
+      raise exception 'HELD_RELEASE_REQUIRED' using errcode = 'P0001';                        -- @kontrol:MOVE_TRANSITION
+    end if;                                                                                   -- @kontrol:MOVE_TRANSITION
+    if v_from not in ('INSPECTION', 'QUARANTINE') then                                        -- @kontrol:MOVE_TRANSITION
+      raise exception 'STATUS_MOVE_NOT_ALLOWED' using errcode = 'P0001';                      -- @kontrol:MOVE_TRANSITION
+    end if;                                                                                   -- @kontrol:MOVE_TRANSITION
+    -- AUTH-04: bukti reautentikasi baru, sekali pakai, terikat tenant/pengguna/sesi/aksi/batch/isi perpindahan.
+    v_grant := iam.reauth_consume_scope(p_body->>'reauthToken', 'inventory.move', bt.id, p_body);  -- @kontrol:MOVE_REAUTH
+  elsif v_from = 'DAMAGED' or (v_from = 'HELD' and v_to <> 'DAMAGED')
+        or (v_from = 'QUARANTINE' and v_to not in ('HELD', 'DAMAGED'))
+        or (v_from = 'INSPECTION' and v_to not in ('QUARANTINE', 'HELD', 'DAMAGED')) then
+    raise exception 'STATUS_MOVE_NOT_ALLOWED' using errcode = 'P0001';
   end if;
 
   v_event := app.inv_event(a.tenant_id, 'STATUS_MOVE', v_pid, v_loc, a.user_id, v_now, p_key, v_reason);
@@ -684,7 +753,9 @@ begin
   v_val := app.pool_move(a.tenant_id, v_event, v_loc, v_pid, v_from, v_to, v_qty::bigint * pk.factor, a.user_id, v_now);
 
   perform app.audit(a.tenant_id, a.user_id, 'STOCK_STATUS_MOVED', 'inventory_event', v_event,
-                    pg_catalog.jsonb_build_object('from', v_from, 'to', v_to, 'qty', v_qty, 'valueIdr', v_val));
+                    pg_catalog.jsonb_build_object('from', v_from, 'to', v_to, 'qty', v_qty, 'valueIdr', v_val,
+                      'packageVersionId', pk.id, 'batchId', bt.id, 'reason', v_reason, 'referenceDocument', v_ref,
+                      'reauthGrantId', v_grant));
   v_resp := pg_catalog.jsonb_build_object('eventId', v_event, 'productId', v_pid, 'from', v_from, 'to', v_to,
               'qty', v_qty, 'qtyBase', v_qty::bigint * pk.factor, 'valueMovedIdr', v_val);
   return app.idem_finish(a.tenant_id, 'inventory.move', p_key, v_resp);
@@ -814,9 +885,9 @@ begin
 end $$;
 
 -- POST /auth/reauth: pintu masuk runtime (runtime tidak punya akses schema iam).
-create function app.reauth_start(p_password text, p_action text, p_target uuid) returns jsonb
+create function app.reauth_start(p_password text, p_action text, p_target uuid, p_scope jsonb default null) returns jsonb
 language sql volatile security definer set search_path = pg_catalog, pg_temp as $$
-  select iam.reauth_issue(p_password, p_action, p_target)
+  select iam.reauth_issue(p_password, p_action, p_target, p_scope)
 $$;
 
 -- GET /inventory/holds
@@ -839,4 +910,4 @@ reset role;
 revoke execute on all functions in schema app from public;
 grant execute on function app.inventory_receive(uuid, jsonb), app.package_open(uuid, uuid, jsonb), app.stock_move(uuid, jsonb),
   app.stock_hold(uuid, jsonb), app.stock_release(uuid, uuid, jsonb), app.hold_list(boolean) to app_runtime;
-grant execute on function app.reauth_start(text, text, uuid) to app_runtime;
+grant execute on function app.reauth_start(text, text, uuid, jsonb) to app_runtime;

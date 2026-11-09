@@ -45,6 +45,8 @@ const DB_CODES: Record<string, [number, string]> = {
   SUPPLIER_REQUIRED: [400, "Pemasok wajib diisi untuk setiap penerimaan stok"],
   BATCH_EXPIRY_MISMATCH: [409, "Nomor batch ini sudah tercatat dengan tanggal kedaluwarsa berbeda"],
   REAUTH_REQUIRED: [403, "Tindakan ini butuh konfirmasi ulang sandi Owner"],
+  HELD_RELEASE_REQUIRED: [409, "Stok ditahan hanya bisa kembali siap jual lewat pelepasan penahanan"],
+  STATUS_MOVE_NOT_ALLOWED: [409, "Perpindahan status ini tidak diizinkan"],
   SUBSIDY_RECEIPT_SEPARATE: [409, "Pupuk subsidi wajib diterima lewat inventori subsidi, bukan Tambah Stok umum"],
   INVENTORY_INCONSISTENT: [409, "Saldo stok tidak konsisten; jalankan rekonsiliasi"],
 };

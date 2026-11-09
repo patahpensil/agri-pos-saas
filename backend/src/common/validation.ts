@@ -191,12 +191,29 @@ export const schemas = {
       to: stockStatus,
       qty: z.number().int().min(1).max(10_000_000),
       reason,
+      referenceDocument: z.string().trim().min(1).max(120).optional(),
+      reauthToken: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     })
     .strict(),
   stockHold: z.object({ productId: uuid, batchId: uuid.optional(), locationId: uuid.optional(), reason }).strict(),
   holdRelease: z.object({ reason, reauthToken: z.string().regex(/^[0-9a-f]{64}$/).optional() }).strict(),
   // Reautentikasi Owner untuk satu aksi sensitif pada satu objek (AUTH-04).
-  reauth: z.object({ password, action: z.enum(["inventory.release"]), targetId: uuid }).strict(),
+  // inventory.move: isi perpindahan yang disetujui ikut diikat ke token (INV-AUD-04); targetId = batchId.
+  reauth: z
+    .object({
+      password,
+      action: z.enum(["inventory.release", "inventory.move"]),
+      targetId: uuid,
+      scope: z
+        .object({
+          productId: uuid, packageId: uuid, batchId: uuid, locationId: uuid.optional(),
+          from: z.enum(["INSPECTION", "QUARANTINE"]), to: z.literal("SALEABLE"), qty: z.number().int().min(1).max(10_000_000),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .refine((r) => (r.action === "inventory.move") === (r.scope !== undefined), "scope wajib untuk inventory.move saja"),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 

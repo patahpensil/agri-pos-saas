@@ -18,8 +18,8 @@ export class ReauthController {
     const r = await db(
       this.dbs.withActor(req.sessionToken!, (c) =>
         c.query<{ r: { status: string; reauthToken?: string; expiresAt?: string } }>(
-          "select app.reauth_start($1, $2, $3) as r",
-          [b.password, b.action, b.targetId.toLowerCase()],
+          "select app.reauth_start($1, $2, $3, $4::jsonb) as r",
+          [b.password, b.action, b.targetId.toLowerCase(), b.scope ? JSON.stringify(b.scope) : null],
         ),
       ),
     );
