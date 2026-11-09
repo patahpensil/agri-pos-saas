@@ -128,6 +128,15 @@ export async function stockCountTests(): Promise<void> {
     });
 
     await test("COUNT-03", KA, "Admin, token palsu, tenant lain, dan body asing ditolak", async () => {
+      // Uji ini harus mandiri: harness mutasi menjalankan COUNT-03 saja.
+      // Tanpa setup mandiri, mutant dapat tampak tertangkap karena countId kosong.
+      if (!countId) {
+        const s = await countSubmit(ADM.token, productId, pkg.id, bt.id, 8);
+        eq(s.result.status, 201, "fixture COUNT-03: " + s.result.text);
+        countId = String(s.result.body.countId);
+        requestKey = s.key;
+        requestBody = s.body;
+      }
       const listed = await http("GET", "/inventory/counts", O.token);
       eq(listed.status, 200, listed.text);
       ok((listed.body.items as Json[]).some((c) => c.id === countId), "list tidak memuat count");
