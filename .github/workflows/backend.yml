@@ -90,7 +90,7 @@ jobs:
         working-directory: backend
         run: npm run build
 
-      - name: Uji langsung ke PostgreSQL (unit, startup, DB, audit, katalog, pooler, API)
+      - name: Uji langsung ke PostgreSQL (unit, startup, DB, audit, katalog, inventori, pooler, API)
         working-directory: backend
         env:
           TEST_TARGET: direct
@@ -103,12 +103,12 @@ jobs:
           TEST_RESULTS_DIR: results
         run: node dist/test/run.js
 
-      - name: Uji lewat PgBouncer mode transaksi (DB, audit, katalog, pooler, API)
+      - name: Uji lewat PgBouncer mode transaksi (DB, audit, katalog, inventori, pooler, API)
         if: always()
         working-directory: backend
         env:
           TEST_TARGET: pgbouncer
-          TEST_SUITES: db,aud,catalog,pooler,api
+          TEST_SUITES: db,aud,catalog,inv,pooler,api
           TEST_DB_NAME: ${{ env.DB }}
           TEST_RUNTIME_HOST: 127.0.0.1
           TEST_RUNTIME_PORT: ${{ env.PGB_PORT }}
@@ -149,6 +149,23 @@ jobs:
           bash db/test/mutation.sh NO_FORCE_BIZ T-DB-02 || rc=1
           bash db/test/mutation.sh PRODUCT_FK CAT-AUD-01 || rc=1
           bash db/test/mutation.sh TRUNCATE_GUARD CAT-AUD-02 || rc=1
+          bash db/test/mutation.sh IDEM_INV ST-INV-05 || rc=1
+          bash db/test/mutation.sh RECEIPT_EXPIRY INV-REC-02 || rc=1
+          bash db/test/mutation.sh HOLD_BLOCK ST-INV-07-INV || rc=1
+          bash db/test/mutation.sh OPEN_GUARD ST-INV-12 || rc=1
+          bash db/test/mutation.sh OWNER_RELEASE ST-INV-07-INV || rc=1
+          bash db/test/mutation.sh OWNER_MOVE INV-MOVE-01 || rc=1
+          bash db/test/mutation.sh MOVE_VALUE ST-COST-06 || rc=1
+          bash db/test/mutation.sh SUBSIDY_SPLIT INV-SUB-01 || rc=1
+          bash db/test/mutation.sh REAUTH_RELEASE INV-AUD-01-API,INV-AUD-01-DB || rc=1
+          bash db/test/mutation.sh REAUTH_EXPIRY INV-AUD-01-API || rc=1
+          bash db/test/mutation.sh REAUTH_SINGLE_USE INV-AUD-01-DB || rc=1
+          bash db/test/mutation.sh SUPPLIER_REQUIRED INV-AUD-02-DB || rc=1
+          bash db/test/mutation.sh BATCH_IDENTITY INV-AUD-03-API,INV-AUD-03-DB || rc=1
+          bash db/test/mutation.sh MOVE_REAUTH INV-AUD-04-A,INV-AUD-04-B,INV-AUD-04-C,INV-AUD-04-D,INV-AUD-04-E,INV-AUD-04-F,INV-AUD-04-O || rc=1
+          bash db/test/mutation.sh MOVE_TRANSITION INV-AUD-04-K || rc=1
+          bash db/test/mutation.sh HOLD_ORIGIN INV-HOLD-ORIGIN,INV-HOLD-ORIGIN-03 || rc=1
+          bash db/test/mutation.sh HOLD_ATTRIBUTION INV-HOLD-ORIGIN-02 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc

@@ -81,6 +81,25 @@ const packageUpdate = z
   })
   .strict();
 
+const stockStatus = z.enum(["SALEABLE", "INSPECTION", "HELD", "DAMAGED", "QUARANTINE"]);
+const reason = z.string().trim().min(1).max(200);
+const receiptLine = z
+  .object({
+    packageId: uuid,
+    qty: z.number().int().min(1).max(10_000_000),
+    status: stockStatus,
+    batch: z.object({ number: z.string().trim().min(1).max(64).optional(), expiresOn: isoDate.optional() }).strict().optional(),
+    cost: z
+      .object({
+        basis: z.enum(["KNOWN", "BONUS_ZERO", "UNVERIFIED"]),
+        totalIdr: rupiah.optional(),
+        reason: z.string().trim().min(1).max(200).optional(),
+        origin: z.string().trim().min(1).max(200).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 // .strict(): field asing ditolak (termasuk tenant_id, role, plan). Tidak ada objek bersarang yang sah,
 // jadi objek/array di posisi mana pun juga ditolak oleh tipe field.
 export const schemas = {
@@ -142,6 +161,60 @@ export const schemas = {
     })
     .strict(),
   stockQuery: z.object({ productId: uuid.optional() }).strict(),
+  // Inventori (INV-01/05/06). Tidak ada field tenant/role/aktor; database menurunkannya dari sesi.
+  inventoryReceipt: z
+    .object({
+      productId: uuid,
+      locationId: uuid.optional(),
+      supplierName: z.string().trim().min(1).max(120),
+      sourceDocument: z.string().trim().min(1).max(80).optional(),
+      lines: z.array(receiptLine).min(1).max(100),
+    })
+    .strict(),
+  packageOpen: z
+    .object({
+      batchId: uuid,
+      qty: z.number().int().min(1).max(10_000).optional(),
+      status: stockStatus.optional(),
+      loosePackageId: uuid.optional(),
+      locationId: uuid.optional(),
+      physicalConfirmed: z.boolean(),
+    })
+    .strict(),
+  statusMove: z
+    .object({
+      productId: uuid,
+      locationId: uuid.optional(),
+      packageId: uuid,
+      batchId: uuid,
+      from: stockStatus,
+      to: stockStatus,
+      qty: z.number().int().min(1).max(10_000_000),
+      reason,
+      referenceDocument: z.string().trim().min(1).max(120).optional(),
+      reauthToken: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    })
+    .strict(),
+  stockHold: z.object({ productId: uuid, batchId: uuid.optional(), locationId: uuid.optional(), reason }).strict(),
+  holdRelease: z.object({ reason, reauthToken: z.string().regex(/^[0-9a-f]{64}$/).optional() }).strict(),
+  // Reautentikasi Owner untuk satu aksi sensitif pada satu objek (AUTH-04).
+  // inventory.move: isi perpindahan yang disetujui ikut diikat ke token (INV-AUD-04); targetId = batchId.
+  reauth: z
+    .object({
+      password,
+      action: z.enum(["inventory.release", "inventory.move"]),
+      targetId: uuid,
+      scope: z
+        .object({
+          productId: uuid, packageId: uuid, batchId: uuid, locationId: uuid.optional(),
+          from: z.enum(["INSPECTION", "QUARANTINE"]), to: z.literal("SALEABLE"), qty: z.number().int().min(1).max(10_000_000),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .refine((r) => (r.action === "inventory.move") === (r.scope !== undefined), "scope wajib untuk inventory.move saja"),
+  holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 
 
