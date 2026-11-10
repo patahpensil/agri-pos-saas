@@ -10,6 +10,8 @@
 - [ADR-001](docs/ADR_001_ARSITEKTUR_A.md) dan [ADR-002](docs/ADR_002_GITHUB_LAB.md) — keputusan pemilik.
 - Matriks requirement dan acceptance test: `docs/TRACEABILITY_*.csv`.
 
+**Memperbarui matriks pelacakan:** Setiap PR yang menambah atau memperluas uji CI wajib memperbarui `TRACEABILITY_REQUIREMENTS.csv` dan `TRACEABILITY_ACCEPTANCE_TESTS.csv` pada PR yang sama. Status PASS hanya boleh diberikan bila seluruh hasil yang diwajibkan PRD benar-benar dibuktikan oleh uji aplikasi, API, atau database; cakupan sebagian tetap PARTIAL/BELUM_DIUJI. Pemeriksaan `docs-integrity` menolak klaim tanpa ID uji yang terdaftar di `backend/test/ci_gate.py` dan menjaga hash PRD tetap sama.
+
 ## Alur kerja
 
 - Repository **private**; perubahan kode dan dokumen substantif melalui **branch → Pull Request → pemeriksaan → review pemilik → merge**.
