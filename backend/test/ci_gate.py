@@ -28,6 +28,8 @@ COMMON = (
     # INV-07 — opname PRO: captured count, owner-only approval, delta after countedAt.
     + [(f"COUNT-{i:02d}", API if i != 7 else DB) for i in range(1,11)]
     + [("ST-INV-09-INV", API)]
+    # ENT-02 — batas satu lokasi per FREE/PRO, termasuk percobaan serentak (direct + PgBouncer).
+    + [("ENT-LOC-01", DB)]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
