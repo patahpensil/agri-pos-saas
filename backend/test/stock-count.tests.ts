@@ -446,11 +446,12 @@ export async function stockCountTests(): Promise<void> {
       const tooOld = new Date(t - (24 * 60 + 1) * 60_000).toISOString();
       const rejected = await http("POST", "/inventory/counts", O.token, makeBody(tooOld), uuid());
       eq(rejected.status, 400, rejected.text);
-      eq(rejected.body.code, "VALIDATION_ERROR", "24 jam + 1 menit wajib ditolak");
+      // Validasi di fungsi DB melempar VALIDATION (HTTP 400); VALIDATION_ERROR adalah kode Zod API.
+      eq(rejected.body.code, "VALIDATION", "24 jam + 1 menit wajib ditolak");
       const ancient = await http("POST", "/inventory/counts", O.token,
         makeBody("2020-01-01T00:00:00Z"), uuid());
       eq(ancient.status, 400, ancient.text);
-      eq(ancient.body.code, "VALIDATION_ERROR", "tanggal 2020 wajib ditolak");
+      eq(ancient.body.code, "VALIDATION", "tanggal 2020 wajib ditolak");
       const [afterInvalid] = await admin<{ n: number; q: number }>(
         `select (select count(*)::int from biz.stock_count c where c.tenant_id=$1 and c.product_id=$2) n,
                 (select coalesce(sum(qty),0)::int from biz.stock_balance s
