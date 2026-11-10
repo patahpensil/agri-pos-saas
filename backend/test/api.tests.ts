@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
@@ -180,6 +181,104 @@ export async function apiTests(): Promise<void> {
       eq((await http("POST", `/auth/sessions/${s.id}/revoke`, {}, o2.token)).status, 204, "owner cabut sesi admin");
       eq((await http("GET", "/tenant/me", undefined, a.token)).status, 401, "token admin dicabut");
       return "logout -> 401; Owner cabut sesi Admin -> 401";
+    });
+
+    // ST-SEC-04: token yang dicabut tidak boleh menulis produk/stok dengan request yang sah.
+    await test("ST-SEC-04", K, "Token Owner/Admin yang dicabut dan token perangkat lama tidak dapat mengubah data", async () => {
+      const payload = () => ({
+        sku: "SEC04-" + randomUUID().slice(0, 8).toUpperCase(),
+        name: "Alat pertanian uji sesi", category: "TOOL", subsidized: false, baseUnit: "pcs",
+        packages: [{ key: "pcs", form: "LOOSE", factor: 1, label: "Pcs" }],
+        opening: [{ packageKey: "pcs", qty: 2, cost: { basis: "KNOWN", totalIdr: 2000 } }],
+      });
+      const create = (token: string, body: ReturnType<typeof payload>, key = randomUUID()) =>
+        http("POST", "/products", body, token, { "idempotency-key": key });
+      const receipt = (productId: string, packageId: string) => ({
+        productId, supplierName: "Pemasok Uji Sesi",
+        lines: [{ packageId, qty: 1, status: "SALEABLE",
+          batch: { number: "B-SEC04", expiresOn: "2035-12-31" },
+          cost: { basis: "KNOWN", totalIdr: 1000 } }],
+      });
+      const receive = (token: string, body: ReturnType<typeof receipt>, key = randomUUID()) =>
+        http("POST", "/inventory/receipts", body, token, { "idempotency-key": key });
+      const state = async (tenantId: string, productId: string) => {
+        const sql =
+          "select (select count(*)::int from biz.product where tenant_id=$1) products, " +
+          "(select count(*)::int from biz.inventory_event where tenant_id=$1) events, " +
+          "(select coalesce(sum(qty),0)::int from biz.stock_balance where tenant_id=$1) quantity, " +
+          "(select count(*)::int from biz.idempotency where tenant_id=$1) idempotency, " +
+          "(select version::int from biz.product where tenant_id=$1 and id=$2) version, " +
+          "(select name from biz.product where tenant_id=$1 and id=$2) name";
+        const [row] = await admin<{
+          products: number; events: number; quantity: number; idempotency: number;
+          version: number; name: string;
+        }>(sql, [tenantId, productId]);
+        return row;
+      };
+
+      // Owner logout: aksi yang sebelumnya sah harus ditolak dan tidak mencatat mutasi.
+      const owner = await registerOwner("Kios Logout");
+      const made = await create(owner.token, payload());
+      eq(made.status, 201, "produk Owner aktif: " + made.text);
+      const productId = String(made.body.productId);
+      const packageId = String((made.body.product as { packages: { id: string }[] }).packages[0].id);
+      eq((await http("PATCH", "/products/" + productId,
+        { expectedVersion: 1, name: "Produk sah sebelum logout" }, owner.token)).status, 200,
+      "edit Owner aktif");
+      const receiptBody = receipt(productId, packageId);
+      eq((await receive(owner.token, receiptBody)).status, 201, "penerimaan Owner aktif");
+      const ownerBefore = await state(owner.tenant, productId);
+      eq((await http("POST", "/auth/logout", {}, owner.token)).status, 204, "logout Owner");
+      eq((await create(owner.token, payload())).status, 401, "Owner dicabut membuat produk");
+      eq((await http("PATCH", "/products/" + productId,
+        { expectedVersion: ownerBefore.version, name: "Perubahan ilegal" }, owner.token)).status, 401,
+      "Owner dicabut mengubah produk");
+      eq((await receive(owner.token, receiptBody)).status, 401, "Owner dicabut menerima stok");
+      eq(JSON.stringify(await state(owner.tenant, productId)), JSON.stringify(ownerBefore),
+        "produk/stok/idempotensi Owner berubah setelah logout");
+
+      // Owner mencabut sesi Admin: pengajuan perubahan produk dan penerimaan tidak boleh diproses.
+      const pro = await registerOwner("Kios Cabut Admin");
+      await makePro(pro.tenant);
+      const staff = await addAdmin(pro);
+      const byAdmin = await create(staff.token, payload());
+      eq(byAdmin.status, 201, "produk Admin aktif: " + byAdmin.text);
+      const adminProduct = String(byAdmin.body.productId);
+      const adminPackage = String((byAdmin.body.product as { packages: { id: string }[] }).packages[0].id);
+      const adminReceipt = receipt(adminProduct, adminPackage);
+      eq((await receive(staff.token, adminReceipt)).status, 201, "penerimaan Admin aktif");
+      const [adminSession] = await admin<{ id: string }>(
+        "select id from iam.session where tenant_id=$1 and membership_id=$2 and revoked_at is null",
+        [pro.tenant, staff.id],
+      );
+      ok(Boolean(adminSession), "sesi Admin aktif tidak ditemukan");
+      eq((await http("POST", "/auth/sessions/" + adminSession.id + "/revoke", {}, pro.token)).status, 204,
+        "Owner cabut sesi Admin");
+      const adminBefore = await state(pro.tenant, adminProduct);
+      eq((await create(staff.token, payload())).status, 401, "Admin dicabut membuat produk");
+      eq((await http("PATCH", "/products/" + adminProduct,
+        { expectedVersion: adminBefore.version, name: "Perubahan ilegal Admin" }, staff.token)).status, 401,
+      "Admin dicabut mengubah produk");
+      eq((await receive(staff.token, adminReceipt)).status, 401, "Admin dicabut menerima stok");
+      eq(JSON.stringify(await state(pro.tenant, adminProduct)), JSON.stringify(adminBefore),
+        "produk/stok/idempotensi Admin berubah setelah dicabut");
+      eq((await http("GET", "/tenant/me", undefined, pro.token)).status, 200,
+        "Owner sah tidak boleh ikut tercabut");
+
+      // Login di perangkat baru mematikan hak token perangkat lama; request identik tetap sah di perangkat baru.
+      const next = await http("POST", "/auth/login",
+        { phone: pro.phone, password: PW, deviceId: newDevice() });
+      eq(next.status, 200, "login perangkat Owner baru");
+      const nextToken = String(next.body.token);
+      const sameBody = payload();
+      const sameKey = randomUUID();
+      const deviceBefore = await state(pro.tenant, adminProduct);
+      eq((await create(pro.token, sameBody, sameKey)).status, 401, "perangkat lama membuat produk");
+      eq(JSON.stringify(await state(pro.tenant, adminProduct)), JSON.stringify(deviceBefore),
+        "token perangkat lama mengubah stok/produk");
+      eq((await create(nextToken, sameBody, sameKey)).status, 201,
+        "perangkat baru tidak boleh terblokir akibat usaha token lama");
+      return "Owner logout dan Admin dicabut: POST/PATCH/penerimaan 401 tanpa mutasi; perangkat lama 401, baru 201";
     });
 
     await test("T-AUTH-05", K, "Toko FREE membuat Admin -> 403 FEATURE_GATED_PLAN", async () => {
