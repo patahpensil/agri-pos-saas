@@ -19,6 +19,7 @@ import { HealthController } from "./health/health.controller";
 import { CatalogController } from "./catalog/catalog.controller";
 import { InventoryController } from "./inventory/inventory.controller";
 import { ReauthController } from "./auth/reauth.controller";
+import { PricingController } from "./pricing/pricing.controller";
 
 export interface CreatedApp {
   app: INestApplication;
@@ -58,7 +59,7 @@ export async function createApp(cfg: AppConfig, opts: { otpSender?: OtpSender } 
   }
 
   @Module({
-    controllers: [AuthController, TenantController, StaffController, HealthController, CatalogController, InventoryController, ReauthController],
+    controllers: [AuthController, TenantController, StaffController, HealthController, CatalogController, InventoryController, ReauthController, PricingController],
     providers: [
       { provide: CONFIG, useValue: cfg },
       { provide: DbService, useValue: dbs },
