@@ -1,136 +1,136 @@
-test_id,origin,github_ci_status
-ST-INV-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-11,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-INV-13,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COST-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-CASH-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-CASH-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-CASH-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-CASH-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-CASH-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-POS-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-POS-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-POS-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-POS-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-POS-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-11,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-11,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-13,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-14,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-15,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-16,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-17,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-18,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-19,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-22,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-23,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-20,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-21,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-13,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-14,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-15,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-PAY-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-RET-24,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-APR-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-APR-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-DOC-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-DOC-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-13,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SUB-11,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-06,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-11,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-13,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-14,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-15,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-21,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-24,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-22,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-23,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-16,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-17,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-18,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-19,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-SEC-20,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-UX-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-UX-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-UX-03,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-UX-04,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-01,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-02,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-05,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-27,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-07,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-08,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-09,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-10,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-12,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-18,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-19,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-20,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-21,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-22,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-23,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-24,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-16,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-25,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-17,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-26,PRD V1.1 FINAL Appendix A,NOT_RUN
-ST-COMP-04,PRD V1.1 FINAL Appendix A,NOT_RUN
+test_id,origin,github_ci_status,ci_test_ids,test_type,notes
+ST-INV-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"ST-INV-01-MASTER","","Master stok awal nol PASS; ST-INV-01-POS BELUM DIUJI karena checkout belum dibangun."
+ST-INV-02,PRD V1.1 FINAL Appendix A,PASS,"ST-INV-02","API","Saldo 3 karton x12 + 5 botol = 41 diuji pada API stok."
+ST-INV-03,PRD V1.1 FINAL Appendix A,PASS,"ST-INV-03","API","Buka karton mengubah dua bentuk fisik tanpa mengubah ekuivalen dan nilai."
+ST-INV-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-INV-05,PRD V1.1 FINAL Appendix A,PASS,"ST-INV-05","API","Retry sama dan 10 request serentak menghasilkan satu penerimaan."
+ST-INV-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"INV-03-EXP;INV-REC-02","","Penolakan batch kedaluwarsa di penerimaan diuji; API checkout penjualan belum dibangun."
+ST-INV-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"ST-INV-07-INV","","Hold dan pelepasan Owner diuji; ST-INV-07-POS blokir penjualan langsung BELUM DIUJI."
+ST-INV-08,PRD V1.1 FINAL Appendix A,PASS,"ST-INV-08","API","Batch/expiry asal dipertahankan pada unit lepas."
+ST-INV-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"ST-INV-09-INV;COUNT-09","","Mutasi status setelah hitung diuji; penjualan sesudah counted_at belum diuji karena checkout belum dibangun."
+ST-INV-10,PRD V1.1 FINAL Appendix A,PASS,"CAT-12","integrasi DB","Saldo dibuat sengaja tidak cocok; alert muncul dan ledger tetap."
+ST-INV-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-INV-12,PRD V1.1 FINAL Appendix A,PASS,"ST-INV-12","API","Endpoint menolak kemasan yang tidak boleh dibuka dan tanpa konfirmasi fisik."
+ST-INV-13,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"CAT-07;INV-ATOM-01","","Rollback produk dan inventori diuji; transaksi Sale/uang/HPP/dokumen/promo belum ada."
+ST-COST-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"ST-COST-01;CAT-14","","Rumus cost_take DB diuji, bukan transaksi penjualan aktual; HPP Sale BELUM DIUJI."
+ST-COST-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COST-03,PRD V1.1 FINAL Appendix A,PASS,"ST-COST-03","API","Pembukaan kemasan dan perubahan status mempertahankan nilai total."
+ST-COST-04,PRD V1.1 FINAL Appendix A,PASS,"ST-COST-04","API","Bonus dengan nilai nol, dokumen asal dan alasan diperiksa dari ledger."
+ST-COST-06,PRD V1.1 FINAL Appendix A,PASS,"ST-COST-06","API","Pemindahan nilai Rp33 lalu Rp67 dan total Rp100 diperiksa."
+ST-COST-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"ST-COST-05;CAT-14","","Pembagian Rp1 juta diuji pada fungsi DB, belum lewat Sale nyata."
+ST-COST-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-CASH-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-CASH-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-CASH-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-CASH-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-CASH-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-POS-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-POS-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-POS-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-POS-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-POS-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-08,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-10,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-08,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-10,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-12,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-13,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-14,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-15,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-16,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-17,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-18,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-19,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-22,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-23,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-20,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-21,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-13,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-14,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-15,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-PAY-12,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-RET-24,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-APR-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-APR-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-DOC-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-DOC-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-ENT-01","","Penguncian akun diuji; penolakan Sale dari perubahan jam perangkat belum diuji."
+ST-SUB-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-ENT-01","","Lock status diuji; finalisasi tepat waktu commit T-06c belum diuji."
+ST-SUB-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"CAT-17","","Pemalsuan entitlement saat produk ditolak; bukti pembayaran SaaS belum dibangun."
+ST-SUB-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-ENT-01;AUD-LOCK-01","","Lock operasional diuji; ekspor saat grace dan berlangganan belum dibangun."
+ST-SUB-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-13,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-01","","168 jam sejak OTP terverifikasi diuji; skenario OTP baru sukses 2 jam kemudian belum diuji."
+ST-SUB-12,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"AUD-LOCK-01;T-ENT-01","","Lock PRO diuji; H-7, unduh data, perpanjang dan purge belum diuji."
+ST-SUB-08,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"COUNT-01","","FREE menolak opname PRO; endpoint grosir/promo belum dibangun."
+ST-SUB-10,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SUB-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-01","","Awal trial dihitung server; ubah jam perangkat belum diuji pada perangkat nyata."
+ST-SEC-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"CAT-10;INV-TENANT-01;T-TENANT-02","","BOLA produk/inventori/staf diuji, belum semua GET/POST/PATCH/DELETE atau objek finansial."
+ST-SEC-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-03,PRD V1.1 FINAL Appendix A,PASS,"T-AUTH-02;T-AUTH-03;LOGIN-ENUM-01","API + integrasi DB","OTP dan login berulang dibatasi; bentuk jawaban akun tak dikenal sama dalam uji laboratorium."
+ST-SEC-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-04;AUD-SESSION-01","","Token dicabut dan GET ditolak; modifikasi bisnis setelah revokasi belum diuji pada seluruh endpoint."
+ST-SEC-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-08,PRD V1.1 FINAL Appendix A,PASS,"T-TENANT-01;CAT-17","API","tenant_id dari body ditolak; header palsu tidak mengubah tenant sesi."
+ST-SEC-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-SEC-03;AUD-OTP-01","","Log dan penyimpanan OTP diuji; paket aplikasi dan backup terenkripsi belum diuji."
+ST-SEC-10,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-12,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-13,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-14,PRD V1.1 FINAL Appendix A,PASS,"T-DB-06;CAT-AUD-02;INV-APPEND-01","integrasi DB","Auth/entitlement, inventory ledger dan audit append-only menolak ubah dan hapus."
+ST-SEC-15,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-21,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-24,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-22,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-23,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-16,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-17,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-02;AUD-OTP-04","","OTP dan aktivasi Admin diuji; pemulihan Owner berlapis belum dibangun."
+ST-SEC-18,PRD V1.1 FINAL Appendix A,PASS,"T-AUTH-05","API","FREE mencoba menambah Admin melalui API mendapat FEATURE_GATED_PLAN."
+ST-SEC-19,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-SEC-20,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-UX-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-UX-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-UX-03,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-UX-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"CAT-18;INV-SUB-01","","Eligibility produk subsidi diuji; POS umum dengan harga promo belum dibangun."
+ST-COMP-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"INV-SUB-01;CAT-18","","Pemisahan penerimaan umum diuji; penyaluran melebihi stok fisik belum dibangun."
+ST-COMP-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-27,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-08,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-09,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-10,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-12,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-18,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-19,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-20,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-21,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-22,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-23,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-24,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-16,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-25,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-17,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-26,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
+ST-COMP-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
