@@ -304,6 +304,115 @@ export async function stockCountTests(): Promise<void> {
       return "post-count movement dipertahankan; koreksi mustahil ditolak";
     });
 
+
+    await test("COUNT-09", KA, "Dua opname batch sama tidak memotong stok dua kali; opname basi ditolak", async () => {
+      // Fixture milik COUNT-09: dapat berjalan sendiri lewat TEST_ONLY_IDS.
+      async function fixture(suffix: string) {
+        const body = {
+          sku: "STALE-" + uuid().slice(0, 8), name: "Pestisida Opname " + suffix,
+          category: "PESTICIDE", subsidized: false, baseUnit: "botol",
+          packages: [{ key: "botol", form: "LOOSE", factor: 1, label: "Botol" }],
+          opening: [{ packageKey: "botol", qty: 10,
+            batch: { number: "B-" + suffix, expiresOn: "2035-06-01" },
+            cost: { basis: "KNOWN", totalIdr: 1000 } }],
+        };
+        const [made] = await asActor<{ r: { productId: string } }>(O.token,
+          "select app.product_create($1,$2::jsonb) r", [uuid(), JSON.stringify(body)]);
+        const product = made.r.productId;
+        const [packageRow] = await admin<{ id: string }>(
+          "select id from biz.package_version where tenant_id=$1 and product_id=$2 limit 1",
+          [O.tenant, product]);
+        const [batchRow] = await admin<{ id: string }>(
+          "select id from biz.batch where tenant_id=$1 and product_id=$2 limit 1",
+          [O.tenant, product]);
+        ok(Boolean(packageRow?.id && batchRow?.id), "fixture opname tidak lengkap");
+        return { product, packageId: packageRow.id, batchId: batchRow.id };
+      }
+      async function saldo(product: string, expectedLedger: number) {
+        const [balance] = await admin<{ n: string }>(
+          `select coalesce(sum(qty),0)::text n from biz.stock_balance
+            where tenant_id=$1 and product_id=$2 and status='SALEABLE'`,
+          [O.tenant, product]);
+        const [pool] = await admin<{ q: string; v: string }>(
+          `select qty_base::text q,value_idr::text v from biz.cost_pool
+            where tenant_id=$1 and product_id=$2 and status='SALEABLE'`,
+          [O.tenant, product]);
+        const [ledger] = await admin<{ n: number }>(
+          `select count(*)::int n from biz.inventory_ledger
+            where tenant_id=$1 and product_id=$2 and movement='COUNT_ADJUST'`,
+          [O.tenant, product]);
+        eq(balance.n, "8", "stok harus 8 botol");
+        eq(pool.q, "8", "pool qty harus 8");
+        eq(pool.v, "800", "pool nilai harus Rp800");
+        eq(ledger.n, expectedLedger, "baris ledger koreksi");
+        return "stok=" + balance.n + ",pool=" + pool.q + "/Rp" + pool.v + ",ledger=" + ledger.n;
+      }
+      async function submitFor(f: { product: string; packageId: string; batchId: string },
+        countedAt?: string) {
+        const body = { productId: f.product, countedAt: countedAt ?? await serverNow(),
+          reason: "Opname fisik", lines: [{ packageId: f.packageId, batchId: f.batchId, physicalQty: 8 }] };
+        return http("POST", "/inventory/counts", O.token, body, uuid());
+      }
+      async function approveId(id: string) {
+        return approve(O.token, id, await tokenFor(O.token, id));
+      }
+      // (a) A lebih dahulu disetujui; B yang menghitung keadaan sama harus ditolak.
+      const a = await fixture("A");
+      const a1 = await submitFor(a);
+      const b1 = await submitFor(a);
+      eq(a1.status, 201, "A harus masuk");
+      eq(b1.status, 201, "B harus masuk");
+      const aid = String(a1.body.countId), bid = String(b1.body.countId);
+      const aOk = await approveId(aid);
+      eq(aOk.result.status, 200, aOk.result.text);
+      const aBalance = await saldo(a.product, 1);
+      const bDenied = await approveId(bid);
+      eq(bDenied.result.status, 409, bDenied.result.text);
+      eq(bDenied.result.body.code, "VERSION_CONFLICT", "B harus ditolak sebagai opname basi");
+      const aFinal = await saldo(a.product, 1);
+      const [bState] = await admin<{ state: string }>(
+        "select state from biz.stock_count where tenant_id=$1 and id=$2", [O.tenant, bid]);
+      eq(bState.state, "PENDING", "B tidak boleh otomatis disetujui");
+
+      // (b) B lebih dahulu disetujui; A harus ditolak dengan saldo tetap 8.
+      const rev = await fixture("B");
+      const revA = await submitFor(rev), revB = await submitFor(rev);
+      eq(revA.status, 201, "A urutan balik masuk");
+      eq(revB.status, 201, "B urutan balik masuk");
+      const revBok = await approveId(String(revB.body.countId));
+      eq(revBok.result.status, 200, revBok.result.text);
+      const revAdenied = await approveId(String(revA.body.countId));
+      eq(revAdenied.result.status, 409, revAdenied.result.text);
+      eq(revAdenied.result.body.code, "VERSION_CONFLICT", "A urutan balik harus ditolak");
+      const bFinal = await saldo(rev.product, 1);
+
+      // (c) C dibuat setelah A disetujui, tetapi countedAt berada di antara A dibuat dan A disetujui.
+      const stale = await fixture("C");
+      const priorA = await submitFor(stale);
+      eq(priorA.status, 201, priorA.text);
+      const middleTime = await serverNow();
+      const approvedA = await approveId(String(priorA.body.countId));
+      eq(approvedA.result.status, 200, approvedA.result.text);
+      const lateC = await submitFor(stale, middleTime);
+      eq(lateC.status, 409, lateC.text);
+      eq(lateC.body.code, "VERSION_CONFLICT", "C dihitung sebelum koreksi A");
+      const cFinal = await saldo(stale.product, 1);
+
+      // (d) Opname setelah approval terdahulu adalah keadaan baru yang sah; tidak ada koreksi kedua.
+      const valid = await fixture("D");
+      const validA = await submitFor(valid);
+      eq(validA.status, 201, validA.text);
+      const validAok = await approveId(String(validA.body.countId));
+      eq(validAok.result.status, 200, validAok.result.text);
+      const validD = await submitFor(valid);
+      eq(validD.status, 201, validD.text);
+      const validDok = await approveId(String(validD.body.countId));
+      eq(validDok.result.status, 200, validDok.result.text);
+      eq(Number(validDok.result.body.qtyBaseDelta), 0, "D tidak boleh mengoreksi lagi");
+      const dFinal = await saldo(valid.product, 1);
+      return `a=${aBalance}→${aFinal},B=409/PENDING; b=${bFinal},A=409; c=${cFinal},C=409; d=${dFinal},D=200/delta0`;
+    });
+
   } finally {
     await app.close();
     await db.close();
