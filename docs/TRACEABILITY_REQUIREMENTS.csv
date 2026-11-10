@@ -44,7 +44,7 @@ COST-06,MUST,"Bila harga pokok tak dapat diverifikasi, laba kotor tidak boleh di
 COST-07,GATED,Kebijakan penurunan nilai/pemusnahan mengikuti penilaian akuntansi yang disahkan,Cost Engine,NOT_IMPLEMENTED,"","GATED/TBD: memerlukan keputusan atau gerbang resmi sebelum implementasi."
 POS-01,MUST,"Keranjang dapat disiapkan lokal, tetapi finalisasi hanya online dan melalui transaksi server atomik",POS Checkout,NOT_IMPLEMENTED,"",""
 POS-02,MUST,"Penjualan stok negatif, batch ditahan/kedaluwarsa dan pemakaian promo di luar hak selalu ditolak server",POS Checkout,NOT_IMPLEMENTED,"",""
-POS-03,MUST,"Harga server disnapshot, diperiksa ulang saat checkout; perubahan material meminta konfirmasi ulang",POS Checkout,NOT_IMPLEMENTED,"",Penetapan harga versi server dan penolakan approval usang (PRICE-08) sudah diuji, tetapi snapshot harga, validasi ulang, serta konfirmasi saat checkout Sale belum dibangun. Tetap NOT_IMPLEMENTED."
+POS-03,MUST,"Harga server disnapshot, diperiksa ulang saat checkout; perubahan material meminta konfirmasi ulang",POS Checkout,NOT_IMPLEMENTED,"","Penetapan harga versi server dan penolakan approval usang (PRICE-08) sudah diuji, tetapi snapshot harga, validasi ulang, serta konfirmasi saat checkout Sale belum dibangun. Tetap NOT_IMPLEMENTED."
 POS-04,MUST (PRO),"Harga grosir berdasarkan kuantitas dan Barang Diskon berkuota mengikuti harga valid terendah, tanpa penumpukan",POS Checkout,NOT_IMPLEMENTED,"",""
 POS-05,MUST (PRO),"Kuota promo hanya dikurangi untuk unit yang benar-benar mendapat harga promo, tidak direservasi di draft",POS Checkout,NOT_IMPLEMENTED,"",""
 POS-06,MUST,"Finalisasi memakai idempotency key, membuat satu Sale/ledger/dokumen untuk retry identik",POS Checkout,NOT_IMPLEMENTED,"",""
