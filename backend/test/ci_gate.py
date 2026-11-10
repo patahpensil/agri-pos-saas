@@ -12,6 +12,7 @@ COMMON = (
     + [("SEC-FIX-02", API), ("SEC-FIX-05", API), ("SEC-FIX-07", API), ("SEC-FIX-08", API), ("SEC-FIX-10", API)]
     + [("T-ROLE-01", DB), ("T-ROLE-01", API), ("T-TENANT-01", DB), ("T-TENANT-01", API), ("T-TENANT-02", DB), ("T-TENANT-02", API)]
     + [(f"T-AUTH-0{i}", API) for i in range(1, 7)]
+    + [("ST-SEC-04", API)] # revoked session cannot modify products/inventory, direct + PgBouncer
     + [("T-API-01", API), ("T-ENT-01", API), ("T-SEC-01", API), ("T-SEC-02", API), ("T-SEC-03", "uji log"), ("HEALTH-01", API)]
     # Perbaikan audit independen PR #4
     + [("AUD-OTP-01", DB), ("AUD-OTP-01", API), ("AUD-OTP-02", "integrasi DB/pengirim OTP"),
