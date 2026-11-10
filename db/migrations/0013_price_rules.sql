@@ -141,14 +141,14 @@ begin
   if p_action = 'price.approve' then
     if p_scope is null or pg_catalog.jsonb_typeof(p_scope) <> 'object'
        or p_scope - 'expectedVersion' <> '{}'::jsonb
-       or coalesce(p_scope->>'expectedVersion','') !~ '^[1-9][0-9]{0,10} then
+       or coalesce(p_scope->>'expectedVersion','') !~ '^[1-9][0-9]{0,10}$' then
       raise exception 'VALIDATION' using errcode = 'P0001';
     end if;
     return pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_object(
       'expectedVersion', (p_scope->>'expectedVersion')::bigint)::text, 'UTF8'));
   end if;
   raise exception 'VALIDATION' using errcode = 'P0001';
-end $;
+end $$;
 create or replace function iam.reauth_issue(p_password text, p_action text, p_target uuid, p_scope jsonb default null) returns jsonb
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
 declare a record; v_h bytea; v_n integer; v_win bigint := iam.param('login_window_seconds'); v_pw text;
