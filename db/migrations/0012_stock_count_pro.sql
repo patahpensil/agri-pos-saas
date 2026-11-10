@@ -253,6 +253,12 @@ begin
    select coalesce((select b.qty from biz.stock_balance b
     where b.tenant_id=a.tenant_id and b.location_id=v_loc and b.product_id=p.id
       and b.package_version_id=v_pkg and b.batch_id=v_batch and b.status='SALEABLE'),0) into v_qty;
+   -- Opname basi karena ada koreksi opname lain setelah waktu hitung harus dihitung ulang; jangan rebase.
+   -- Umpan balik dini; penjaga utama ada di count_approve.
+   if exists (select 1 from biz.inventory_ledger x where x.tenant_id=a.tenant_id and x.location_id=v_loc
+       and x.product_id=p.id and x.package_version_id=v_pkg and x.batch_id=v_batch
+       and x.movement='COUNT_ADJUST' and x.event_at>v_counted) then
+     raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if;
    v_move:=app.count_movement_after(a.tenant_id,v_loc,p.id,v_pkg,v_batch,v_counted);
    v_qty:=v_qty-v_move;
    if v_qty<0 or v_qty>2147483647 then raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if;
@@ -353,6 +359,11 @@ begin
    select coalesce((select b.qty from biz.stock_balance b
     where b.tenant_id=a.tenant_id and b.location_id=c.location_id and b.product_id=c.product_id
       and b.package_version_id=l.package_version_id and b.batch_id=l.batch_id and b.status='SALEABLE'),0) into v_qty;
+   -- Opname basi karena koreksi opname lain setelah counted_at wajib dihitung ulang, tidak boleh direbase.
+   if exists (select 1 from biz.inventory_ledger x where x.tenant_id=a.tenant_id and x.location_id=c.location_id -- @kontrol:COUNT_STALE
+       and x.product_id=c.product_id and x.package_version_id=l.package_version_id and x.batch_id=l.batch_id -- @kontrol:COUNT_STALE
+       and x.movement='COUNT_ADJUST' and x.event_at>c.counted_at) then -- @kontrol:COUNT_STALE
+     raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if; -- @kontrol:COUNT_STALE
    v_after:=app.count_movement_after(a.tenant_id,c.location_id,c.product_id,l.package_version_id,l.batch_id,c.counted_at);
    v_asof:=v_qty-v_after;
    if v_asof<>l.system_qty_at_count then raise exception 'VERSION_CONFLICT' using errcode='P0001'; end if;
