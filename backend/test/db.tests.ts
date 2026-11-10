@@ -134,6 +134,60 @@ export async function dbTests(): Promise<void> {
     return "6/6 ditolak APPEND_ONLY";
   });
 
+  // ENT-02: batas satu lokasi aktif harus benar-benar menolak lokasi kedua di database,
+  // termasuk saat dua permintaan berjalan serentak. MAX belum termasuk lingkup v1.
+  await test("ENT-LOC-01", K, "FREE/PRO satu lokasi aktif; lokasi kedua dan aktivasi ganda ditolak; insert serentak hanya satu lolos", async () => {
+    const free = await registerOwnerSql("Kios Batas Lokasi FREE");
+    const pro = await registerOwnerSql("Kios Batas Lokasi PRO");
+    await makePro(pro.tenant);
+
+    for (const { tenant, plan } of [{ tenant: free.tenant, plan: "FREE" }, { tenant: pro.tenant, plan: "PRO" }]) {
+      const [before] = await admin<{ n: number }>(
+        "select count(*)::int n from platform.location where tenant_id=$1 and active", [tenant],
+      );
+      eq(before.n, 1, plan + " wajib memiliki satu lokasi awal");
+
+      const second = await errOf(admin(
+        "insert into platform.location(tenant_id, name) values ($1, $2)",
+        [tenant, "Cabang kedua " + plan],
+      ));
+      ok(second.startsWith("23505:") && second.includes("location_one_active"), plan + ": " + second);
+
+      const [inactive] = await admin<{ id: string }>(
+        "insert into platform.location(tenant_id, name, active) values ($1, $2, false) returning id",
+        [tenant, "Lokasi historis tidak aktif"],
+      );
+      const activated = await errOf(admin(
+        "update platform.location set active=true where tenant_id=$1 and id=$2",
+        [tenant, inactive.id],
+      ));
+      ok(activated.startsWith("23505:") && activated.includes("location_one_active"), plan + ": " + activated);
+      const [after] = await admin<{ active: number; inactive: number }>(
+        "select count(*) filter (where active)::int active, count(*) filter (where not active)::int inactive from platform.location where tenant_id=$1",
+        [tenant],
+      );
+      eq(after.active, 1, plan + " lokasi aktif setelah dua penolakan");
+      eq(after.inactive, 1, plan + " lokasi nonaktif tidak boleh tiba-tiba aktif");
+    }
+
+    // Tenant baru hanya dipakai menguji kontensi unik; tidak ada langganan/penjualan.
+    const [t] = await admin<{ id: string }>(
+      "insert into platform.tenant(business_name, timezone) values ($1, $2) returning id",
+      ["Fixture batas lokasi serentak", "Asia/Makassar"],
+    );
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) =>
+      errOf(admin("insert into platform.location(tenant_id, name) values ($1, $2)", [t.id, "Lokasi serentak " + i])),
+    ));
+    eq(results.filter((s) => s === "OK").length, 1, "hanya satu insert serentak boleh sukses");
+    eq(results.filter((s) => s.startsWith("23505:") && s.includes("location_one_active")).length, 7,
+      "tujuh insert serentak ditolak oleh index unik");
+    const [race] = await admin<{ n: number }>(
+      "select count(*)::int n from platform.location where tenant_id=$1 and active", [t.id],
+    );
+    eq(race.n, 1, "lokasi aktif setelah persaingan");
+    return "FREE dan PRO: 1 lokasi; lokasi kedua/aktivasi historis ditolak 23505; balapan 8 insert: 1 sukses, 7 ditolak";
+  });
+
   await test("T-DB-07", "uji meta", "Migrasi dengan file rusak membuat migrate.sh gagal (exit != 0)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mig-"));
     cpSync(resolve(__dirname, "../../../db/migrations"), dir, { recursive: true });
