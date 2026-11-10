@@ -22,6 +22,7 @@ const TABLES = [
   // Modul inventori (0009)
   "biz.stock_receipt", "biz.stock_hold", "biz.stock_hold_line", "iam.reauth_grant",
   "biz.stock_count", "biz.stock_count_line",
+  "biz.price_change_request", "biz.price_rule_version",
 ];
 
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.
@@ -31,9 +32,7 @@ const ALLOW: Record<string, string[]> = {
     "iam.security_params_status",
   ],
   app_runtime: [
-    "app.count_approve", "app.count_create", "app.count_list", "app.hold_list", "app.inventory_fefo", "app.inventory_receive", "app.inventory_reconcile", "app.logout", "app.package_open", "app.product_create",
-    "app.product_get", "app.product_list", "app.product_update", "app.reauth_start", "app.session_list", "app.session_revoke", "app.staff_deactivate",
-    "app.staff_invite", "app.staff_list", "app.stock_hold", "app.stock_list", "app.stock_move", "app.stock_release", "app.tenant_me",
+    "app.count_approve", "app.count_create", "app.count_list", "app.hold_list", "app.inventory_fefo", "app.inventory_receive", "app.inventory_reconcile", "app.logout", "app.package_open", "app.price_approve", "app.price_list", "app.price_submit", "app.product_create", "app.product_get", "app.product_list", "app.product_update", "app.reauth_start", "app.session_list", "app.session_revoke", "app.staff_deactivate", "app.staff_invite", "app.staff_list", "app.stock_hold", "app.stock_list", "app.stock_move", "app.stock_release", "app.tenant_me"
   ],
   otp_dispatch_runtime: ["iam.otp_dispatch_ack", "iam.otp_dispatch_claim", "iam.otp_dispatch_fail", "iam.otp_dispatch_set_code"],
 };

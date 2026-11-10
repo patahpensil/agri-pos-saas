@@ -240,7 +240,7 @@ export const schemas = {
   reauth: z
     .object({
       password,
-      action: z.enum(["inventory.release", "inventory.move", "inventory.count.approve"]),
+      action: z.enum(["inventory.release", "inventory.move", "inventory.count.approve", "price.approve"]),
       targetId: uuid,
       scope: z
         .object({
@@ -254,8 +254,29 @@ export const schemas = {
     .refine((r) =>
       (r.action === "inventory.release" && r.scope === undefined)
       || (r.action === "inventory.move" && !!r.scope && "productId" in r.scope)
-      || (r.action === "inventory.count.approve" && !!r.scope && "expectedVersion" in r.scope),
+      || (["inventory.count.approve", "price.approve"].includes(r.action) && !!r.scope && "expectedVersion" in r.scope),
       "scope harus sesuai aksi reautentikasi"),
+  priceRequest: z.object({
+    productId: uuid, packageId: uuid,
+    ruleType: z.enum(["RETAIL", "WHOLESALE", "PROMO"]),
+    minQty: z.number().int().min(1).max(10000000),
+    priceIdr: rupiah, quotaUnits: z.number().int().min(1).max(10000000).optional(),
+    startsAt: z.string().datetime({ offset: true }).optional(),
+    endsAt: z.string().datetime({ offset: true }).optional(),
+    expectedVersion: z.number().int().min(1),
+    reason, referenceDocument: z.string().trim().min(1).max(120).optional(),
+  }).strict().superRefine((r, ctx) => {
+    const temporal=r.startsAt!==undefined||r.endsAt!==undefined;
+    const quota=r.quotaUnits!==undefined;
+    const valid=r.ruleType==="RETAIL" ? r.minQty===1&&!temporal&&!quota
+      : r.ruleType==="WHOLESALE" ? r.minQty>=2&&!temporal&&!quota
+      : r.minQty===1&&quota&&!!r.startsAt&&!!r.endsAt&&Date.parse(r.endsAt)>Date.parse(r.startsAt);
+    if(!valid)ctx.addIssue({code:"custom",message:"aturan harga tidak sah"});
+  }),
+  priceApprove: z.object({
+    expectedVersion: z.number().int().min(1),
+    reason, reauthToken:z.string().regex(/^[0-9a-f]{64}$/),
+  }).strict(),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 
