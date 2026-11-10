@@ -88,7 +88,7 @@ ST-SUB-11,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-01","","Awal trial dihit
 ST-SEC-01,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"CAT-10;INV-TENANT-01;T-TENANT-02","","BOLA produk/inventori/staf diuji, belum semua GET/POST/PATCH/DELETE atau objek finansial."
 ST-SEC-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-SEC-03,PRD V1.1 FINAL Appendix A,PASS,"T-AUTH-02;T-AUTH-03;LOGIN-ENUM-01","API + integrasi DB","OTP dan login berulang dibatasi; bentuk jawaban akun tak dikenal sama dalam uji laboratorium."
-ST-SEC-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"T-AUTH-04;AUD-SESSION-01","","Token dicabut dan GET ditolak; modifikasi bisnis setelah revokasi belum diuji pada seluruh endpoint."
+ST-SEC-04,PRD V1.1 FINAL Appendix A,PASS,"T-AUTH-04;AUD-SESSION-01;SEC-FIX-07;ST-SEC-04","API","Revoke sesi Owner/Admin dan pergantian perangkat diuji: POST/PATCH produk serta penerimaan stok ditolak 401, tanpa perubahan data bisnis; request sah sebelum revoke atau dengan sesi baru."
 ST-SEC-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-SEC-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-SEC-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
