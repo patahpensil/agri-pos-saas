@@ -136,6 +136,36 @@ jobs:
           TEST_RESULTS_DIR: results/isolated-count
         run: node dist/test/run.js
 
+      - name: Validasi uji COUNT-09 mandiri sebelum mutasi
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_SUITES: count
+          TEST_ONLY_IDS: COUNT-09
+          TEST_RESULTS_DIR: results/isolated-count-09
+        run: node dist/test/run.js
+
+      - name: Validasi uji COUNT-10 mandiri sebelum mutasi
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_SUITES: count
+          TEST_ONLY_IDS: COUNT-10
+          TEST_RESULTS_DIR: results/isolated-count-10
+        run: node dist/test/run.js
+
       - name: Uji mutasi terisolasi (kontrol dihapus -> uji terkait wajib FAIL)
         if: always()
         env:
@@ -187,6 +217,8 @@ jobs:
           bash db/test/mutation.sh FEFO_GUARD FEFO-02 || rc=1
           bash db/test/mutation.sh FEFO_EXPIRY FEFO-07 || rc=1
           bash db/test/mutation.sh COUNT_OWNER_APPROVAL COUNT-03 || rc=1
+          bash db/test/mutation.sh COUNT_STALE COUNT-09 || rc=1
+          bash db/test/mutation.sh COUNT_WINDOW COUNT-10 || rc=1
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc
