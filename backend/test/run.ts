@@ -8,10 +8,11 @@ import { audDbTests } from "./aud.tests";
 import { catalogTests } from "./catalog.tests";
 import { inventoryTests } from "./inventory.tests";
 import { fefoTests } from "./fefo.tests";
+import { stockCountTests } from "./stock-count.tests";
 import { configTests, unitTests } from "./unit-config.tests";
 
 async function main(): Promise<void> {
-  const suites = (process.env.TEST_SUITES ?? "unit,config,db,aud,catalog,inv,fefo,pooler,api").split(",").map((s) => s.trim());
+  const suites = (process.env.TEST_SUITES ?? "unit,config,db,aud,catalog,inv,fefo,count,pooler,api").split(",").map((s) => s.trim());
   console.log(`== target=${TARGET} suites=${suites.join(",")}`);
   if (suites.includes("unit")) await unitTests();
   if (suites.includes("db")) await dbTests();
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
   if (suites.includes("catalog")) await catalogTests();
   if (suites.includes("inv")) await inventoryTests();
   if (suites.includes("fefo")) await fefoTests();
+  if (suites.includes("count")) await stockCountTests();
   if (suites.includes("pooler")) await poolerTests();
   if (suites.includes("api")) await apiTests();
   if (suites.includes("config")) await configTests();

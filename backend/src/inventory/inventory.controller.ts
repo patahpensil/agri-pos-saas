@@ -60,6 +60,30 @@ export class InventoryController {
     return this.call(req.sessionToken!, "select app.stock_release($1, $2, $3::jsonb) as r", [idemKey(key), id.toLowerCase(), JSON.stringify(b)]);
   }
 
+  @Post("inventory/counts")
+  @HttpCode(201)
+  async countSubmit(@Req() req: AuthedRequest, @Headers("idempotency-key") key: string | undefined, @Body() body: unknown) {
+    const b = parseBody(schemas.stockCount, body);
+    return this.call(req.sessionToken!, "select app.count_create($1,$2::jsonb) as r",
+      [idemKey(key), JSON.stringify(b)]);
+  }
+
+  @Get("inventory/counts")
+  async countList(@Req() req: AuthedRequest) {
+    const r = await db(this.dbs.withActor(req.sessionToken!, (c) =>
+      c.query<{ r: unknown }>("select app.count_list() as r")));
+    return r.rows[0].r;
+  }
+
+  @Post("inventory/counts/:id/approve")
+  @HttpCode(200)
+  async countApprove(@Req() req: AuthedRequest, @Param("id") id: string, @Headers("idempotency-key") key: string | undefined, @Body() body: unknown) {
+    const b = parseBody(schemas.stockCountApprove, body);
+    if (!isUuid(id)) throw notFound();
+    return this.call(req.sessionToken!, "select app.count_approve($1,$2,$3::jsonb) as r",
+      [idemKey(key), id.toLowerCase(), JSON.stringify(b)]);
+  }
+
   @Get("inventory/fefo")
   async fefo(@Req() req: AuthedRequest, @Query() query: unknown) {
     const q = parseBody(schemas.fefoQuery, query);
