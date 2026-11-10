@@ -231,6 +231,8 @@ begin
  v_loc:=app.inv_location(a.tenant_id,p_body);
  v_counted:=(p_body->>'countedAt')::timestamptz;
  if v_counted is null or v_counted>v_enter then raise exception 'VALIDATION' using errcode='P0001'; end if;
+ -- Batas 24 jam berdasarkan waktu SERVER; jam klien tidak dipercaya.
+ if v_counted<v_enter-interval '24 hours' then raise exception 'VALIDATION' using errcode='P0001'; end if; -- @kontrol:COUNT_WINDOW
  select coalesce(max(id),0) into v_ledger from biz.inventory_ledger
   where tenant_id=a.tenant_id and location_id=v_loc and product_id=p.id;
  insert into biz.stock_count(tenant_id,product_id,location_id,counted_at,entered_at,ledger_version,reason,submitted_by)
