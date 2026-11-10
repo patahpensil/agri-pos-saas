@@ -413,6 +413,64 @@ export async function stockCountTests(): Promise<void> {
       return `a=${aBalance}→${aFinal},B=409/PENDING; b=${bFinal},A=409; c=${cFinal},C=409; d=${dFinal},D=200/delta0`;
     });
 
+
+    await test("COUNT-10", KA, "countedAt >24 jam ditolak di DB; 23 jam diterima", async () => {
+      // Fixture sendiri: tidak tergantung COUNT-01..09 atau state stok uji lainnya.
+      const body = {
+        sku: "WINDOW-" + uuid().slice(0, 8), name: "Pestisida Batas Waktu Opname",
+        category: "PESTICIDE", subsidized: false, baseUnit: "botol",
+        packages: [{ key: "botol", form: "LOOSE", factor: 1, label: "Botol" }],
+        opening: [{ packageKey: "botol", qty: 10,
+          batch: { number: "WINDOW-" + uuid().slice(0, 8), expiresOn: "2035-06-01" },
+          cost: { basis: "KNOWN", totalIdr: 1000 } }],
+      };
+      const [created] = await asActor<{ r: { productId: string } }>(O.token,
+        "select app.product_create($1,$2::jsonb) r", [uuid(), JSON.stringify(body)]);
+      const productId = created.r.productId;
+      const [p] = await admin<{ id: string }>(
+        "select id from biz.package_version where tenant_id=$1 and product_id=$2 limit 1",
+        [O.tenant, productId]);
+      const [b] = await admin<{ id: string }>(
+        "select id from biz.batch where tenant_id=$1 and product_id=$2 limit 1",
+        [O.tenant, productId]);
+      const [initial] = await admin<{ n: number }>(
+        "select count(*)::int n from biz.stock_count where tenant_id=$1 and product_id=$2",
+        [O.tenant, productId]);
+      eq(initial.n, 0, "tidak boleh ada opname awal");
+      const makeBody = (countedAt: string) => ({
+        productId, countedAt, reason: "Memeriksa jendela waktu opname",
+        lines: [{ packageId: p.id, batchId: b.id, physicalQty: 10,
+          cost: { basis: "KNOWN", totalIdr: 1000 } }],
+      });
+      const t = Date.parse(await serverNow());
+      const tooOld = new Date(t - (24 * 60 + 1) * 60_000).toISOString();
+      const rejected = await http("POST", "/inventory/counts", O.token, makeBody(tooOld), uuid());
+      eq(rejected.status, 400, rejected.text);
+      eq(rejected.body.code, "VALIDATION_ERROR", "24 jam + 1 menit wajib ditolak");
+      const ancient = await http("POST", "/inventory/counts", O.token,
+        makeBody("2020-01-01T00:00:00Z"), uuid());
+      eq(ancient.status, 400, ancient.text);
+      eq(ancient.body.code, "VALIDATION_ERROR", "tanggal 2020 wajib ditolak");
+      const [afterInvalid] = await admin<{ n: number; q: number }>(
+        `select (select count(*)::int from biz.stock_count c where c.tenant_id=$1 and c.product_id=$2) n,
+                (select coalesce(sum(qty),0)::int from biz.stock_balance s
+                  where s.tenant_id=$1 and s.product_id=$2 and s.status='SALEABLE') q`,
+        [O.tenant, productId]);
+      eq(afterInvalid.n, 0, "penolakan tidak boleh menciptakan opname");
+      eq(afterInvalid.q, 10, "stok tetap 10 setelah penolakan");
+      const accepted = await http("POST", "/inventory/counts", O.token,
+        makeBody(new Date(t - 23 * 60 * 60_000).toISOString()), uuid());
+      eq(accepted.status, 201, accepted.text);
+      const [afterAccepted] = await admin<{ n: number; q: number }>(
+        `select (select count(*)::int from biz.stock_count c where c.tenant_id=$1 and c.product_id=$2) n,
+                (select coalesce(sum(qty),0)::int from biz.stock_balance s
+                  where s.tenant_id=$1 and s.product_id=$2 and s.status='SALEABLE') q`,
+        [O.tenant, productId]);
+      eq(afterAccepted.n, 1, "hanya opname 23 jam diterima");
+      eq(afterAccepted.q, 10, "pengajuan tidak mengubah stok");
+      return "24h+1m=400, 2020=400, 23h=201; count=1, stok=10";
+    });
+
   } finally {
     await app.close();
     await db.close();
