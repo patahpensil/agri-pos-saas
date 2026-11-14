@@ -275,7 +275,9 @@ export const schemas = {
   }),
   priceApprove: z.object({
     expectedVersion: z.number().int().min(1),
-    reason, reauthToken:z.string().regex(/^[0-9a-f]{64}$/),
+    reason,
+    referenceDocument: z.string().trim().min(1).max(120).optional(),
+    reauthToken: z.string().regex(/^[0-9a-f]{64}$/),
   }).strict(),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };

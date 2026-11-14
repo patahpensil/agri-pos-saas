@@ -4,7 +4,7 @@ import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import {
-  RUNTIME_HOST,RUNTIME_PORT,DBNAME,TEST_OTP_MAC_KEY,PW,admin,eq,errOf,ok,test,
+  RUNTIME_HOST,RUNTIME_PORT,DBNAME,TEST_OTP_MAC_KEY,PW,admin,asActor,eq,errOf,ok,test,
   harnessSender,registerOwnerSql,makePro,inviteAndActivateAdminSql,
 } from "./harness";
 
@@ -41,7 +41,8 @@ async function product(token:string,subsidized=false):Promise<P>{
 }
 const input=(p:P,type:"RETAIL"|"WHOLESALE"|"PROMO"="RETAIL",extra:Record<string,unknown>={})=>({
   productId:p.id,packageId:p.unit,ruleType:type,minQty:type==="WHOLESALE"?3:1,
-  priceIdr:12500,expectedVersion:p.version,reason:"Harga dari Owner disahkan",...extra,
+  priceIdr:12500,expectedVersion:p.version,reason:"Harga dari Owner disahkan",
+  referenceDocument:"DAFTAR-HARGA-01",...extra,
 });
 const submit=(token:string,b:unknown,key=randomUUID())=>http("POST","/price-change-requests",token,b,key);
 const prices=(token:string,id:string)=>http("GET","/products/"+id+"/prices",token);
@@ -49,9 +50,9 @@ async function reauth(token:string,id:string,v:number,password=PW):Promise<Resul
   return http("POST","/auth/reauth",token,
     {password,action:"price.approve",targetId:id,scope:{expectedVersion:v}});
 }
-const approve=(token:string,id:string,v:number,re:string,key=randomUUID())=>
+const approve=(token:string,id:string,v:number,re:string,key=randomUUID(),referenceDocument?:string)=>
   http("POST","/price-change-requests/"+id+"/approve",token,
-    {expectedVersion:v,reason:"Pemeriksaan harga Owner",reauthToken:re},key);
+    {expectedVersion:v,reason:"Pemeriksaan harga Owner",reauthToken:re,referenceDocument},key);
 async function approved(token:string,p:P,type:"RETAIL"|"WHOLESALE"|"PROMO"="RETAIL",extra:Record<string,unknown>={}):Promise<Result>{
   const sub=await submit(token,input(p,type,extra));eq(sub.status,201,"ajuan: "+sub.text);
   const id=String(sub.body.requestId),g=await reauth(token,id,p.version);
@@ -253,6 +254,126 @@ export async function priceTests():Promise<void>{
       const forged=await submit(o.token,{...input(normal),tenant_id:other.tenant});
       eq(forged.status,400,"tenant_id ditolak");
       return "subsidi terpisah, tenant_id asing ditolak";
+    });
+    await test("PRICE-17",K,"Faktor kemasan berharga yang disetujui terkunci sejak stok nol",async()=>{
+      const p=await product(o.token);
+      const approval=await approved(o.token,p,"RETAIL",{packageId:p.box,priceIdr:120000});
+      const version=Number(approval.body.productVersion);
+      const patch=await http("PATCH","/products/"+p.id,adm.token,{
+        expectedVersion:version,packages:{update:[{id:p.box,factor:24}]},
+      });
+      eq(patch.status,409,"Admin tidak boleh mengubah isi varian berharga");
+      eq(patch.body.code,"PACKAGE_FACTOR_LOCKED","kode faktor terkunci");
+      eq(await errOf(admin("update biz.package_version set factor=24 where tenant_id=$1 and id=$2",[o.tenant,p.box])),
+        "PACKAGE_FACTOR_LOCKED","guard database");
+      const added=await http("PATCH","/products/"+p.id,adm.token,{
+        expectedVersion:version,packages:{add:[{form:"SEALED",factor:24,label:"Karton 24",supersedesId:p.box}]},
+      });
+      eq(added.status,200,"varian baru boleh dibuat: "+added.text);
+      eq(await rows("select factor n from biz.package_version where tenant_id=$1 and id=$2",[o.tenant,p.box]),12,"isi historis");
+      const before=await prices(o.token,p.id);
+      const rules=before.body.rules as {packageId:string;priceIdr:number}[];
+      eq(rules.length,1,"varian baru belum diberi harga");
+      eq(rules[0].packageId,p.box,"harga tetap melekat pada kemasan isi 12");
+      eq(rules[0].priceIdr,120000,"harga yang disetujui");
+      const racing=await product(o.token);
+      const proposal=await submit(adm.token,input(racing,"RETAIL",{packageId:racing.box,priceIdr:120000}));
+      eq(proposal.status,201,"pengajuan untuk uji serentak");
+      const requestId=String(proposal.body.requestId);
+      const grant=await reauth(o.token,requestId,racing.version);
+      eq(grant.status,201,"reauth untuk uji serentak");
+      const [review,change]=await Promise.all([
+        approve(o.token,requestId,racing.version,String(grant.body.reauthToken)),
+        http("PATCH","/products/"+racing.id,adm.token,{
+          expectedVersion:racing.version,packages:{update:[{id:racing.box,factor:24}]},
+        }),
+      ]);
+      const reviewWon=review.status===200 && change.status===409;
+      const editWon=change.status===200 && review.status===409;
+      ok(reviewWon || editWon,`satu operasi harus berhasil: approval=${review.status}, edit=${change.status}`);
+      eq(await rows("select factor n from biz.package_version where tenant_id=$1 and id=$2",[o.tenant,racing.box]),
+        reviewWon?12:24,"isi setelah operasi serentak");
+      eq(await rows("select count(*)::int n from biz.price_rule_version where tenant_id=$1 and request_id=$2",[o.tenant,requestId]),
+        reviewWon?1:0,"harga setelah operasi serentak");
+      return "Faktor varian berharga terkunci; varian baru tanpa harga; approval dan edit serentak tidak tumpang tindih";
+    });
+
+    await test("PRICE-18",K,"Owner membaca rincian promo dan persetujuan mencatat dokumen rujukan",async()=>{
+      const p=await product(o.token);
+      const startsAt="2030-01-01T00:00:00Z",endsAt="2031-01-01T00:00:00Z";
+      const reason="Promo pembelian karton";
+      const s=await submit(adm.token,input(p,"PROMO",{
+        packageId:p.box,priceIdr:100000,quotaUnits:3,startsAt,endsAt,reason,referenceDocument:undefined,
+      }));
+      eq(s.status,201,"pengajuan promo: "+s.text);
+      const id=String(s.body.requestId);
+      const list=await prices(o.token,p.id);
+      eq(list.status,200,"Owner membuka rincian: "+list.text);
+      const [proposal]=list.body.requests as Record<string,unknown>[];
+      eq(proposal.id,id,"ID pengajuan");eq(proposal.packageId,p.box,"varian");
+      eq(proposal.packageLabel,"Karton 12","label kemasan");eq(proposal.packageFactor,12,"isi kemasan");
+      eq(proposal.state,"PENDING","status");eq(proposal.expectedVersion,p.version,"versi");
+      eq(proposal.ruleType,"PROMO","jenis");eq(proposal.priceIdr,100000,"harga");
+      eq(proposal.minQty,1,"minimum");eq(proposal.quotaUnits,3,"kuota");
+      eq(Date.parse(String(proposal.startsAt)),Date.parse(startsAt),"mulai");
+      eq(Date.parse(String(proposal.endsAt)),Date.parse(endsAt),"berakhir");
+      eq(proposal.reason,reason,"alasan");eq(proposal.referenceDocument,null,"rujukan belum diisi");
+      const key=randomUUID();
+      const grant=await reauth(o.token,id,p.version);
+      eq(grant.status,201,"reauth: "+grant.text);
+      const token=String(grant.body.reauthToken);
+      const noReference=await approve(o.token,id,p.version,token,key);
+      eq(noReference.status,400,"persetujuan tanpa rujukan ditolak");
+      eq(noReference.body.code,"PRICE_REFERENCE_REQUIRED","rujukan wajib di database");
+      eq(await rows("select count(*)::int n from biz.price_rule_version where tenant_id=$1 and request_id=$2",[o.tenant,id]),0,"harga belum terbit");
+      const reference="PENETAPAN-PROMO-01";
+      const accepted=await approve(o.token,id,p.version,token,key,reference);
+      eq(accepted.status,200,"ulang dengan rujukan sah: "+accepted.text);
+      const replay=await approve(o.token,id,p.version,token,key,reference);
+      eq(replay.status,200,"ulang permintaan yang telah berhasil");
+      eq(replay.body.ruleId,accepted.body.ruleId,"harga yang sama");
+      eq(replay.body.replayed,true,"penanda ulang");
+      const [audit]=await admin<{detail:Record<string,unknown>}>(
+        "select detail from biz.audit_event where tenant_id=$1 and entity_id=$2 and kind='PRICE_APPROVED'",[o.tenant,id]);
+      eq(audit.detail.referenceDocument,reference,"dokumen pada jejak audit");
+      eq(audit.detail.reason,"Pemeriksaan harga Owner","alasan pada jejak audit");
+      ok(typeof audit.detail.reauthGrantId==="string","ID reauth pada jejak audit");
+
+      const next=await submit(adm.token,input({...p,version:Number(accepted.body.productVersion)},"WHOLESALE",{
+        minQty:6,referenceDocument:"DAFTAR-GROSIR-02",
+      }));
+      eq(next.status,201,"pengajuan grosir: "+next.text);
+      const nextId=String(next.body.requestId);
+      const detail=await prices(o.token,p.id);
+      const wholesale=(detail.body.requests as Record<string,unknown>[]).find(r=>r.id===nextId);
+      eq(wholesale?.minQty,6,"minimum grosir terlihat");
+      eq(wholesale?.referenceDocument,"DAFTAR-GROSIR-02","rujukan pengajuan terlihat");
+      const nextVersion=Number(next.body.expectedVersion);
+      const nextGrant=await reauth(o.token,nextId,nextVersion);
+      eq(nextGrant.status,201,"reauth grosir: "+nextGrant.text);
+      const inherited=await approve(o.token,nextId,nextVersion,String(nextGrant.body.reauthToken));
+      eq(inherited.status,200,"rujukan usulan dapat dipakai saat persetujuan: "+inherited.text);
+      return "Rincian promo dan grosir terbaca; persetujuan tanpa rujukan ditolak; rujukan dan reauth tercatat";
+    });
+
+    await test("PRICE-19",K,"Sesi sah tidak dapat membaca harga setelah FREE/PRO berakhir",async()=>{
+      const proProduct=await product(o.token),freeProduct=await product(free.token);
+      await approved(o.token,proProduct);
+      await submit(free.token,input(freeProduct));
+      await admin(
+        "update platform.subscription set activated_at=now()-interval '8 days', expires_at=now()-interval '1 day', grace_deadline=now()+interval '6 days' where tenant_id=$1",
+        [free.tenant]);
+      await admin(
+        "update platform.subscription set activated_at=now()-interval '31 days', expires_at=now()-interval '1 hour', grace_deadline=now()+interval '29 days' where tenant_id=$1",
+        [o.tenant]);
+      const sessions=[[free.token,freeProduct.id],[o.token,proProduct.id],[adm.token,proProduct.id]];
+      for(const [token,productId] of sessions){
+        const locked=await prices(token,productId);
+        eq(locked.status,403,"harga terkunci: "+locked.text);
+        eq(locked.body.code,"TENANT_LOCKED","kode paket berakhir");
+        eq(await errOf(asActor(token,"select app.price_list($1)",[productId])),"TENANT_LOCKED","cek langsung di DB");
+      }
+      return "FREE Owner dan PRO Owner/Admin diblokir pada API dan fungsi DB selama masa jeda";
     });
   }finally{
     await app.close();await db.close();
