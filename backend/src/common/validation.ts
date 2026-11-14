@@ -240,7 +240,7 @@ export const schemas = {
   reauth: z
     .object({
       password,
-      action: z.enum(["inventory.release", "inventory.move", "inventory.count.approve"]),
+      action: z.enum(["inventory.release", "inventory.move", "inventory.count.approve", "price.approve"]),
       targetId: uuid,
       scope: z
         .object({
@@ -254,8 +254,26 @@ export const schemas = {
     .refine((r) =>
       (r.action === "inventory.release" && r.scope === undefined)
       || (r.action === "inventory.move" && !!r.scope && "productId" in r.scope)
-      || (r.action === "inventory.count.approve" && !!r.scope && "expectedVersion" in r.scope),
+      || (["inventory.count.approve", "price.approve"].includes(r.action) && !!r.scope && "expectedVersion" in r.scope),
       "scope harus sesuai aksi reautentikasi"),
+  priceRequest: z.object({
+    productId: uuid,
+    packageId: uuid,
+    priceIdr: rupiah,
+    expectedVersion: z.number().int().min(1),
+    reason,
+    referenceDocument: z.string().trim().min(1).max(120).optional(),
+  }).strict(),
+  priceApprove: z.object({
+    expectedVersion: z.number().int().min(1),
+    reason,
+    referenceDocument: z.string().trim().min(1).max(120).optional(),
+    reauthToken: z.string().regex(/^[0-9a-f]{64}$/),
+  }).strict(),
+  priceReject: z.object({
+    expectedVersion: z.number().int().min(1),
+    reason,
+  }).strict(),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };
 

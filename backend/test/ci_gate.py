@@ -31,6 +31,7 @@ COMMON = (
     + [("ST-INV-09-INV", API)]
     # ENT-02 — batas satu lokasi per FREE/PRO, termasuk percobaan serentak (direct + PgBouncer).
     + [("ENT-LOC-01", DB)]
+    + [(f"PRICE-{i:02d}", API) for i in range(1,24)] # harga eceran, keputusan Owner dan integritas
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
@@ -89,6 +90,11 @@ MUTATIONS = {
     "count_owner_approval": ["COUNT-03"],
     "count_stale": ["COUNT-09"],
     "count_window": ["COUNT-10"],
+    "price_owner_approval": ["PRICE-06"],
+    "price_reauth": ["PRICE-07"],
+    "price_stale": ["PRICE-08"],
+    "price_factor_lock": ["PRICE-17"],
+    "price_reference": ["PRICE-20"],
 }
 EXPECTED = {
     "direct": COMMON + [(f"U-0{i}", "unit") for i in range(1, 6)] + [("T-CONFIG-01", "startup"), ("T-OTP-01", "startup"),
