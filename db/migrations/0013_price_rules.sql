@@ -1,7 +1,6 @@
--- 0013: Harga per varian dan persetujuan harga Owner (K-2/AUTH-04/POS-03 partial).
--- Belum ada checkout Sale, pemotongan kuota promo atau HET subsidi: tidak boleh dianggap sudah selesai.
--- Hanya fungsi SECURITY DEFINER di database boleh menulis harga. Tidak menambah hak tabel runtime.
+-- Harga eceran berversi per kemasan, keputusan Owner, dan audit.
 set role migration_owner;
+
 alter table iam.reauth_grant drop constraint reauth_grant_action_check;
 alter table iam.reauth_grant add constraint reauth_grant_action_check
   check (action in ('inventory.release','inventory.move','inventory.count.approve','price.approve'));
@@ -9,102 +8,111 @@ alter table biz.idempotency drop constraint idempotency_operation_check;
 alter table biz.idempotency add constraint idempotency_operation_check
   check (operation in ('product.create','inventory.receipt','inventory.open','inventory.move',
     'inventory.hold','inventory.release','inventory.count','inventory.count.approve',
-    'price.request','price.approve'));
+    'price.request','price.approve','price.reject'));
 
 create table biz.price_change_request (
   tenant_id uuid not null,
   id uuid not null default pg_catalog.gen_random_uuid(),
   product_id uuid not null,
   package_version_id uuid not null,
-  rule_type text not null check (rule_type in ('RETAIL','WHOLESALE','PROMO')),
-  min_qty integer not null check (min_qty >= 1),
-  price_idr bigint not null check (price_idr >= 0 and price_idr <= 1000000000000000),
-  quota_units integer check (quota_units is null or quota_units > 0),
-  starts_at timestamptz,
-  ends_at timestamptz,
+  price_idr bigint not null check (price_idr between 0 and 1000000000000000),
   expected_version bigint not null check (expected_version > 0),
-  state text not null default 'PENDING' check (state in ('PENDING','APPROVED')),
-  reason text not null check (char_length(pg_catalog.btrim(reason)) between 1 and 200),
-  source_document text check (source_document is null or char_length(source_document) between 1 and 120),
+  state text not null default 'PENDING' check (state in ('PENDING','APPROVED','REJECTED')),
+  reason text not null check (char_length(reason) between 1 and 200 and reason ~ '[^[:space:]]'),
+  source_document text check (source_document is null or
+    (char_length(source_document) between 1 and 120 and source_document ~ '[^[:space:]]')),
   submitted_by uuid not null references iam.user_account(id),
   submitted_at timestamptz not null default pg_catalog.clock_timestamp(),
   approved_by uuid references iam.user_account(id),
   approved_at timestamptz,
-  primary key(tenant_id,id),
-  foreign key(tenant_id, product_id) references biz.product(tenant_id,id),
-  foreign key(tenant_id, product_id, package_version_id) references biz.package_version(tenant_id,product_id,id),
-  check ((rule_type='RETAIL' and min_qty=1 and quota_units is null and starts_at is null and ends_at is null)
-     or (rule_type='WHOLESALE' and min_qty>=2 and quota_units is null and starts_at is null and ends_at is null)
-     or (rule_type='PROMO' and min_qty=1 and quota_units>0 and starts_at is not null and ends_at>starts_at)),
-  check ((state='PENDING' and approved_by is null and approved_at is null)
-      or (state='APPROVED' and approved_by is not null and approved_at is not null))
+  rejected_by uuid references iam.user_account(id),
+  rejected_at timestamptz,
+  primary key (tenant_id,id),
+  foreign key (tenant_id,product_id) references biz.product(tenant_id,id),
+  foreign key (tenant_id,product_id,package_version_id) references biz.package_version(tenant_id,product_id,id),
+  check (
+    (state = 'PENDING' and approved_by is null and approved_at is null
+                       and rejected_by is null and rejected_at is null)
+    or (state = 'APPROVED' and approved_by is not null and approved_at is not null
+                           and rejected_by is null and rejected_at is null)
+    or (state = 'REJECTED' and rejected_by is not null and rejected_at is not null
+                           and approved_by is null and approved_at is null)
+  )
 );
-create index price_request_pending on biz.price_change_request(tenant_id,product_id,state);
+create index price_request_lookup on biz.price_change_request(tenant_id,product_id,submitted_at,id);
+
 create table biz.price_rule_version (
   tenant_id uuid not null,
   id uuid not null default pg_catalog.gen_random_uuid(),
   request_id uuid not null,
   product_id uuid not null,
   package_version_id uuid not null,
-  rule_type text not null check (rule_type in ('RETAIL','WHOLESALE','PROMO')),
-  min_qty integer not null check (min_qty >= 1),
-  price_idr bigint not null check (price_idr >= 0),
-  quota_units integer check (quota_units is null or quota_units > 0),
-  used_units integer not null default 0 check (used_units >= 0),
-  starts_at timestamptz,
-  ends_at timestamptz,
+  price_idr bigint not null check (price_idr between 0 and 1000000000000000),
   approved_by uuid not null references iam.user_account(id),
-  approved_at timestamptz not null default pg_catalog.clock_timestamp(),
+  approved_at timestamptz not null,
   primary key (tenant_id,id),
   unique (tenant_id,request_id),
   foreign key (tenant_id,request_id) references biz.price_change_request(tenant_id,id),
-  foreign key (tenant_id,product_id,package_version_id) references biz.package_version(tenant_id,product_id,id),
-  check (quota_units is null or used_units<=quota_units),
-  check ((rule_type='RETAIL' and min_qty=1 and quota_units is null and starts_at is null and ends_at is null)
-      or (rule_type='WHOLESALE' and min_qty>=2 and quota_units is null and starts_at is null and ends_at is null)
-      or (rule_type='PROMO' and min_qty=1 and quota_units>0 and starts_at is not null and ends_at>starts_at))
+  foreign key (tenant_id,product_id,package_version_id) references biz.package_version(tenant_id,product_id,id)
 );
-create index price_rule_lookup on biz.price_rule_version(tenant_id,product_id,package_version_id,rule_type,approved_at desc);
--- Audit harga historis tak boleh dihapus/diedit. Pemotongan kuota nanti ditambah secara teruji bersama checkout.
+create index price_rule_lookup
+  on biz.price_rule_version(tenant_id,product_id,package_version_id,approved_at desc,id desc);
+
 create trigger price_rule_append_only before update or delete on biz.price_rule_version
   for each row execute function iam.reject_change();
 create trigger price_rule_no_truncate before truncate on biz.price_rule_version
   for each statement execute function iam.reject_change();
 
 create function biz.price_request_guard() returns trigger
-language plpgsql set search_path=pg_catalog,pg_temp as $$
+language plpgsql set search_path = pg_catalog, pg_temp as $$
 begin
- if tg_op <> 'UPDATE'
-    or old.state <> 'PENDING' or new.state <> 'APPROVED'
-    or new.approved_by is null or new.approved_at is null
-    or (old.tenant_id,old.id,old.product_id,old.package_version_id,old.rule_type,old.min_qty,
-        old.price_idr,old.quota_units,old.starts_at,old.ends_at,old.expected_version,
-        old.reason,old.source_document,old.submitted_by,old.submitted_at)
-       is distinct from
-       (new.tenant_id,new.id,new.product_id,new.package_version_id,new.rule_type,new.min_qty,
-        new.price_idr,new.quota_units,new.starts_at,new.ends_at,new.expected_version,
-        new.reason,new.source_document,new.submitted_by,new.submitted_at)
- then
-   raise exception 'APPEND_ONLY' using errcode='P0001';
- end if;
- return new;
+  if tg_op <> 'UPDATE'
+     or old.state <> 'PENDING' or new.state not in ('APPROVED','REJECTED')
+     or (old.tenant_id,old.id,old.product_id,old.package_version_id,old.price_idr,old.expected_version,
+         old.reason,old.source_document,old.submitted_by,old.submitted_at)
+        is distinct from
+        (new.tenant_id,new.id,new.product_id,new.package_version_id,new.price_idr,new.expected_version,
+         new.reason,new.source_document,new.submitted_by,new.submitted_at)
+  then
+    raise exception 'APPEND_ONLY' using errcode = 'P0001';
+  end if;
+  return new;
 end $$;
-revoke execute on function biz.price_request_guard() from public;
-create trigger price_request_guard before update or delete on biz.price_change_request
- for each row execute function biz.price_request_guard();
-create trigger price_request_no_truncate before truncate on biz.price_change_request
- for each statement execute function iam.reject_change();
 
-grant select,insert,update on biz.price_change_request to app_fn_owner;
-grant select,insert on biz.price_rule_version to app_fn_owner;
+create trigger price_request_guard before update or delete on biz.price_change_request
+  for each row execute function biz.price_request_guard();
+create trigger price_request_no_truncate before truncate on biz.price_change_request
+  for each statement execute function iam.reject_change();
+
+create function biz.package_approved_price_guard() returns trigger
+language plpgsql set search_path = pg_catalog, pg_temp as $$
+begin
+  if exists (                                                                            -- @kontrol:PRICE_FACTOR_LOCK
+    select 1 from biz.price_rule_version r                                                 -- @kontrol:PRICE_FACTOR_LOCK
+    where r.tenant_id = old.tenant_id and r.product_id = old.product_id                    -- @kontrol:PRICE_FACTOR_LOCK
+      and r.package_version_id = old.id                                                   -- @kontrol:PRICE_FACTOR_LOCK
+  ) then                                                                                 -- @kontrol:PRICE_FACTOR_LOCK
+    raise exception 'PACKAGE_FACTOR_LOCKED' using errcode = 'P0001';                       -- @kontrol:PRICE_FACTOR_LOCK
+  end if;                                                                                -- @kontrol:PRICE_FACTOR_LOCK
+  return new;
+end $$;
+
+create trigger package_approved_price_guard
+  before update of factor, form on biz.package_version
+  for each row
+  when (old.factor is distinct from new.factor or old.form is distinct from new.form)
+  execute function biz.package_approved_price_guard();
+
+grant select, insert, update on biz.price_change_request to app_fn_owner;
+grant select, insert on biz.price_rule_version to app_fn_owner;
 alter table biz.price_change_request enable row level security;
 alter table biz.price_change_request force row level security;
 alter table biz.price_rule_version enable row level security;
 alter table biz.price_rule_version force row level security;
 create policy price_request_tenant on biz.price_change_request for all to app_fn_owner
- using (tenant_id=app.current_tenant()) with check (tenant_id=app.current_tenant());
+  using (tenant_id = app.current_tenant()) with check (tenant_id = app.current_tenant());
 create policy price_rule_tenant on biz.price_rule_version for all to app_fn_owner
- using (tenant_id=app.current_tenant()) with check (tenant_id=app.current_tenant());
+  using (tenant_id = app.current_tenant()) with check (tenant_id = app.current_tenant());
 reset role;
 
 set role auth_fn_owner;
@@ -141,7 +149,8 @@ begin
   if p_action = 'price.approve' then
     if p_scope is null or pg_catalog.jsonb_typeof(p_scope) <> 'object'
        or p_scope - 'expectedVersion' <> '{}'::jsonb
-       or coalesce(p_scope->>'expectedVersion','') !~ '^[1-9][0-9]{0,10}$' then
+       or pg_catalog.jsonb_typeof(p_scope->'expectedVersion') is distinct from 'number'
+       or coalesce(p_scope->>'expectedVersion','') !~ '^[1-9][0-9]{0,15}$' then
       raise exception 'VALIDATION' using errcode = 'P0001';
     end if;
     return pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_object(
@@ -187,144 +196,230 @@ end $$;
 reset role;
 
 set role app_fn_owner;
--- Semua harga harus dihitung dan ditetapkan server; klien hanya mengajukan.
-create function app.price_require_pro(p_tenant uuid) returns void
-language plpgsql stable set search_path=pg_catalog,pg_temp as $$
+
+-- Ketiga mutasi harga menerima versi numerik dan alasan singkat.
+create function app.price_validate_decision_fields(p_body jsonb) returns void
+language plpgsql immutable set search_path = pg_catalog, pg_temp as $$
 begin
- if not exists(select 1 from platform.subscription where tenant_id=p_tenant and plan='PRO') then
-   raise exception 'FEATURE_GATED_PLAN' using errcode='P0001';
- end if;
+  if pg_catalog.jsonb_typeof(p_body) is distinct from 'object'
+     or pg_catalog.jsonb_typeof(p_body->'expectedVersion') is distinct from 'number'
+     or coalesce(p_body->>'expectedVersion','') !~ '^[1-9][0-9]{0,15}$'
+     or pg_catalog.jsonb_typeof(p_body->'reason') is distinct from 'string'
+     or coalesce(p_body->>'reason','') !~ '[^[:space:]]'
+     or char_length(p_body->>'reason') > 200
+  then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+end $$;
+
+create function app.price_reference(p_body jsonb) returns text
+language plpgsql immutable set search_path = pg_catalog, pg_temp as $$
+begin
+  if not (p_body ? 'referenceDocument') then
+    return null;
+  end if;
+  if pg_catalog.jsonb_typeof(p_body->'referenceDocument') is distinct from 'string'
+     or coalesce(p_body->>'referenceDocument','') !~ '[^[:space:]]'
+     or char_length(p_body->>'referenceDocument') > 120
+  then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  return pg_catalog.btrim(p_body->>'referenceDocument');
 end $$;
 
 create function app.price_submit(p_key uuid,p_body jsonb) returns jsonb
-language plpgsql volatile security definer set search_path=pg_catalog,pg_temp as $$
-declare a record; p record; v record; i record; v_hash bytea; v_id uuid; v_ret jsonb;
-        v_type text; v_min integer; v_price bigint; v_quota integer;
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
+declare
+  a record; p record; v_package uuid; v_request uuid;
+  v_previous jsonb; v_reference text; v_price bigint;
+  v_uuid constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
 begin
- select * into a from iam.current_actor();
- if a.effective_status<>'ACTIVE' then raise exception 'TENANT_LOCKED' using errcode='P0001'; end if;
- if p_body is null or pg_catalog.jsonb_typeof(p_body)<>'object' or p_key is null
-   then raise exception 'VALIDATION' using errcode='P0001'; end if;
- v_type:=p_body->>'ruleType'; v_min:=(p_body->>'minQty')::integer;
- v_price:=(p_body->>'priceIdr')::bigint; v_quota:=(p_body->>'quotaUnits')::integer;
- if v_type not in ('RETAIL','WHOLESALE','PROMO') or v_type is null
-    or v_min is null or v_price is null or v_price<0 or v_price>1000000000000000 then
-   raise exception 'VALIDATION' using errcode='P0001';
- end if;
- if v_type<>'RETAIL' then perform app.price_require_pro(a.tenant_id); end if;
- if (v_type='RETAIL' and (v_min<>1 or v_quota is not null or p_body ? 'startsAt' or p_body ? 'endsAt'))
-   or (v_type='WHOLESALE' and (v_min<2 or v_quota is not null or p_body ? 'startsAt' or p_body ? 'endsAt'))
-   or (v_type='PROMO' and (v_min<>1 or v_quota is null or v_quota<=0
-       or p_body->>'startsAt' is null or p_body->>'endsAt' is null
-       or (p_body->>'endsAt')::timestamptz <= (p_body->>'startsAt')::timestamptz)) then
-   raise exception 'VALIDATION' using errcode='P0001';
- end if;
- v_hash:=pg_catalog.sha256(pg_catalog.convert_to(p_body::text,'UTF8'));
- insert into biz.idempotency(tenant_id,operation,key,request_hash)
- values(a.tenant_id,'price.request',p_key,v_hash)
- on conflict(tenant_id,operation,key) do nothing;
- if not found then
-   select * into i from biz.idempotency where tenant_id=a.tenant_id and operation='price.request' and key=p_key for update;
-   if i.request_hash<>v_hash then raise exception 'IDEMPOTENCY_PAYLOAD_MISMATCH' using errcode='P0001'; end if;
-   return i.response || '{"replayed":true}'::jsonb;
- end if;
- select * into p from biz.product where tenant_id=a.tenant_id and id=(p_body->>'productId')::uuid for update;
- if p.id is null then raise exception 'NOT_FOUND' using errcode='P0001'; end if;
- if p.is_subsidized then raise exception 'SUBSIDY_PRICE_SEPARATE' using errcode='P0001'; end if;
- if not p.is_active or p.version<>(p_body->>'expectedVersion')::bigint then
-   raise exception 'VERSION_CONFLICT' using errcode='P0001';
- end if;
- select * into v from biz.package_version where tenant_id=a.tenant_id and product_id=p.id
-   and id=(p_body->>'packageId')::uuid and superseded_at is null;
- if v.id is null then raise exception 'NOT_FOUND' using errcode='P0001'; end if;
- insert into biz.price_change_request
- (tenant_id,product_id,package_version_id,rule_type,min_qty,price_idr,quota_units,starts_at,ends_at,
-  expected_version,reason,source_document,submitted_by)
- values (a.tenant_id,p.id,v.id,v_type,v_min,v_price,v_quota,
- (p_body->>'startsAt')::timestamptz,(p_body->>'endsAt')::timestamptz,
- p.version,p_body->>'reason',p_body->>'referenceDocument',a.user_id)
- returning id into v_id;
- perform app.audit(a.tenant_id,a.user_id,'PRICE_REQUESTED','price_change_request',v_id,
-   pg_catalog.jsonb_build_object('ruleType',v_type,'packageId',v.id));
- v_ret:=pg_catalog.jsonb_build_object('requestId',v_id,'state','PENDING','expectedVersion',p.version,'replayed',false);
- update biz.idempotency set response=v_ret where tenant_id=a.tenant_id and operation='price.request' and key=p_key;
- return v_ret;
+  select * into a from iam.current_actor();
+  perform app.inv_require_active(a.effective_status);
+  perform app.price_validate_decision_fields(p_body);
+  if p_body - 'productId' - 'packageId' - 'priceIdr' - 'expectedVersion' - 'reason' - 'referenceDocument' <> '{}'::jsonb
+     or pg_catalog.jsonb_typeof(p_body->'productId') is distinct from 'string'
+     or coalesce(p_body->>'productId','') !~* v_uuid
+     or pg_catalog.jsonb_typeof(p_body->'packageId') is distinct from 'string'
+     or coalesce(p_body->>'packageId','') !~* v_uuid
+     or pg_catalog.jsonb_typeof(p_body->'priceIdr') is distinct from 'number'
+     or coalesce(p_body->>'priceIdr','') !~ '^(0|[1-9][0-9]{0,15})$'
+  then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  v_price := (p_body->>'priceIdr')::bigint;
+  if v_price > 1000000000000000 then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  v_reference := app.price_reference(p_body);
+  v_previous := app.idem_claim(a.tenant_id,'price.request',p_key,p_body);
+  if v_previous is not null then return v_previous; end if;
+
+  select * into p from biz.product
+    where tenant_id = a.tenant_id and id = (p_body->>'productId')::uuid for no key update;
+  if p.id is null then raise exception 'NOT_FOUND' using errcode = 'P0001'; end if;
+  if p.is_subsidized then raise exception 'SUBSIDY_PRICE_SEPARATE' using errcode = 'P0001'; end if;
+  if not p.is_active or p.version <> (p_body->>'expectedVersion')::bigint then
+    raise exception 'VERSION_CONFLICT' using errcode = 'P0001';
+  end if;
+  select v.id into v_package from biz.package_version v
+    where v.tenant_id = a.tenant_id and v.product_id = p.id
+      and v.id = (p_body->>'packageId')::uuid and v.superseded_at is null;
+  if v_package is null then raise exception 'NOT_FOUND' using errcode = 'P0001'; end if;
+
+  insert into biz.price_change_request
+    (tenant_id,product_id,package_version_id,price_idr,expected_version,reason,source_document,submitted_by)
+  values (a.tenant_id,p.id,v_package,v_price,p.version,pg_catalog.btrim(p_body->>'reason'),v_reference,a.user_id)
+  returning id into v_request;
+  perform app.audit(a.tenant_id,a.user_id,'PRICE_REQUESTED','price_change_request',v_request,
+    pg_catalog.jsonb_build_object('packageId',v_package,'priceIdr',v_price));
+  return app.idem_finish(a.tenant_id,'price.request',p_key,pg_catalog.jsonb_build_object(
+    'requestId',v_request,'state','PENDING','expectedVersion',p.version,'replayed',false));
 end $$;
 
 create function app.price_approve(p_key uuid,p_id uuid,p_body jsonb) returns jsonb
-language plpgsql volatile security definer set search_path=pg_catalog,pg_temp as $$
-declare a record; r record; p record; i record; v_hash bytea; v_ret jsonb; v_rule uuid;
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
+declare
+  a record; r record; p record;
+  v_previous jsonb; v_rule uuid; v_reauth_grant uuid;
+  v_reference text; v_self_submitted boolean; v_zero_price boolean; v_approved_at timestamptz;
 begin
- select * into a from iam.current_actor();
- if a.effective_status<>'ACTIVE' then raise exception 'TENANT_LOCKED' using errcode='P0001'; end if;
- if a.role<>'OWNER' then raise exception 'FORBIDDEN_ROLE' using errcode='P0001'; end if;
- if p_key is null or p_id is null or p_body is null or pg_catalog.jsonb_typeof(p_body)<>'object'
-   then raise exception 'VALIDATION' using errcode='P0001'; end if;
- v_hash:=pg_catalog.sha256(pg_catalog.convert_to(
-   pg_catalog.jsonb_build_object('requestId',p_id,'body',p_body)::text,'UTF8'));
- insert into biz.idempotency(tenant_id,operation,key,request_hash)
- values(a.tenant_id,'price.approve',p_key,v_hash)
- on conflict(tenant_id,operation,key) do nothing;
- if not found then
-   select * into i from biz.idempotency where tenant_id=a.tenant_id and operation='price.approve' and key=p_key for update;
-   if i.request_hash<>v_hash then raise exception 'IDEMPOTENCY_PAYLOAD_MISMATCH' using errcode='P0001'; end if;
-   return i.response || '{"replayed":true}'::jsonb;
- end if;
- select * into r from biz.price_change_request where tenant_id=a.tenant_id and id=p_id for update;
- if r.id is null then raise exception 'NOT_FOUND' using errcode='P0001'; end if;
- if r.state<>'PENDING' then raise exception 'PRICE_ALREADY_REVIEWED' using errcode='P0001'; end if;
- select * into p from biz.product where tenant_id=a.tenant_id and id=r.product_id for update;
- if p.id is null or not p.is_active or p.version<>r.expected_version
-    or r.expected_version<>(p_body->>'expectedVersion')::bigint then
-   raise exception 'VERSION_CONFLICT' using errcode='P0001';
- end if;
- if r.rule_type<>'RETAIL' then perform app.price_require_pro(a.tenant_id); end if;
- if p.is_subsidized then raise exception 'SUBSIDY_PRICE_SEPARATE' using errcode='P0001'; end if;
- if not exists (select 1 from biz.package_version v where v.tenant_id=a.tenant_id
-   and v.id=r.package_version_id and v.product_id=p.id and v.superseded_at is null) then
-   raise exception 'VERSION_CONFLICT' using errcode='P0001';
- end if;
- perform iam.reauth_consume_scope(p_body->>'reauthToken','price.approve',p_id,
-   pg_catalog.jsonb_build_object('expectedVersion',r.expected_version));
- insert into biz.price_rule_version
- (tenant_id,request_id,product_id,package_version_id,rule_type,min_qty,price_idr,
-  quota_units,starts_at,ends_at,approved_by)
- values(a.tenant_id,r.id,r.product_id,r.package_version_id,r.rule_type,r.min_qty,r.price_idr,
-  r.quota_units,r.starts_at,r.ends_at,a.user_id)
- returning id into v_rule;
- update biz.price_change_request set state='APPROVED',approved_by=a.user_id,
-   approved_at=pg_catalog.clock_timestamp()
- where tenant_id=a.tenant_id and id=p_id;
- update biz.product set version=version+1,updated_at=pg_catalog.clock_timestamp()
- where tenant_id=a.tenant_id and id=p.id;
- perform app.audit(a.tenant_id,a.user_id,'PRICE_APPROVED','price_change_request',p_id,
-    pg_catalog.jsonb_build_object('ruleId',v_rule,'reason',p_body->>'reason'));
- v_ret:=pg_catalog.jsonb_build_object('requestId',p_id,'ruleId',v_rule,'state','APPROVED','productVersion',p.version+1,'replayed',false);
- update biz.idempotency set response=v_ret where tenant_id=a.tenant_id and operation='price.approve' and key=p_key;
- return v_ret;
+  select * into a from iam.current_actor();
+  perform app.inv_require_active(a.effective_status);
+  perform app.require_owner();                                                           -- @kontrol:PRICE_OWNER_APPROVAL
+  perform app.price_validate_decision_fields(p_body);
+  if p_id is null or p_body - 'expectedVersion' - 'reason' - 'referenceDocument' - 'reauthToken' <> '{}'::jsonb then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  v_reference := app.price_reference(p_body);
+  v_previous := app.idem_claim(a.tenant_id,'price.approve',p_key,
+    pg_catalog.jsonb_build_object('requestId',p_id,'body',p_body));
+  if v_previous is not null then return v_previous; end if;
+
+  select * into r from biz.price_change_request where tenant_id = a.tenant_id and id = p_id for update;
+  if r.id is null then raise exception 'NOT_FOUND' using errcode = 'P0001'; end if;
+  if r.state <> 'PENDING' then raise exception 'PRICE_ALREADY_REVIEWED' using errcode = 'P0001'; end if;
+  select * into p from biz.product where tenant_id = a.tenant_id and id = r.product_id for no key update;
+  if p.id is null or not p.is_active or r.expected_version <> (p_body->>'expectedVersion')::bigint then
+    raise exception 'VERSION_CONFLICT' using errcode = 'P0001';
+  end if;
+  if p.version <> r.expected_version then                                                -- @kontrol:PRICE_STALE
+    raise exception 'VERSION_CONFLICT' using errcode = 'P0001';                            -- @kontrol:PRICE_STALE
+  end if;                                                                                -- @kontrol:PRICE_STALE
+  if p.is_subsidized then raise exception 'SUBSIDY_PRICE_SEPARATE' using errcode = 'P0001'; end if;
+
+  -- Urutan lock sama dengan katalog: produk, lalu varian.
+  perform 1 from biz.package_version v where v.tenant_id = a.tenant_id
+    and v.product_id = p.id and v.id = r.package_version_id and v.superseded_at is null
+    for no key update;
+  if not found then raise exception 'VERSION_CONFLICT' using errcode = 'P0001'; end if;
+  v_reference := coalesce(v_reference,r.source_document);
+  v_self_submitted := r.submitted_by = a.user_id;
+  if not v_self_submitted and coalesce(v_reference,'') !~ '[^[:space:]]' then               -- @kontrol:PRICE_REFERENCE
+    raise exception 'PRICE_REFERENCE_REQUIRED' using errcode = 'P0001';                    -- @kontrol:PRICE_REFERENCE
+  end if;                                                                                -- @kontrol:PRICE_REFERENCE
+  v_reauth_grant := iam.reauth_consume_scope(p_body->>'reauthToken','price.approve',p_id,   -- @kontrol:PRICE_REAUTH
+    pg_catalog.jsonb_build_object('expectedVersion',r.expected_version));                  -- @kontrol:PRICE_REAUTH
+
+  v_zero_price := r.price_idr = 0;
+  v_approved_at := pg_catalog.clock_timestamp();
+  insert into biz.price_rule_version
+    (tenant_id,request_id,product_id,package_version_id,price_idr,approved_by,approved_at)
+  values (a.tenant_id,r.id,r.product_id,r.package_version_id,r.price_idr,a.user_id,v_approved_at)
+  returning id into v_rule;
+  update biz.price_change_request set state = 'APPROVED', approved_by = a.user_id, approved_at = v_approved_at
+    where tenant_id = a.tenant_id and id = p_id;
+  update biz.product set version = version + 1, updated_at = v_approved_at
+    where tenant_id = a.tenant_id and id = p.id;
+  perform app.audit(a.tenant_id,a.user_id,'PRICE_APPROVED','price_change_request',p_id,
+    pg_catalog.jsonb_build_object('ruleId',v_rule,'reason',pg_catalog.btrim(p_body->>'reason'),
+      'referenceDocument',v_reference,'reauthGrantId',v_reauth_grant,
+      'selfSubmitted',v_self_submitted,'zeroPrice',v_zero_price));
+  return app.idem_finish(a.tenant_id,'price.approve',p_key,pg_catalog.jsonb_build_object(
+    'requestId',p_id,'ruleId',v_rule,'state','APPROVED','productVersion',p.version + 1,
+    'zeroPrice',v_zero_price,'replayed',false));
+end $$;
+
+create function app.price_reject(p_key uuid,p_id uuid,p_body jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $$
+declare
+  a record; r record; v_previous jsonb;
+begin
+  select * into a from iam.current_actor();
+  perform app.inv_require_active(a.effective_status);
+  perform app.require_owner();
+  perform app.price_validate_decision_fields(p_body);
+  if p_id is null or p_body - 'expectedVersion' - 'reason' <> '{}'::jsonb then
+    raise exception 'VALIDATION' using errcode = 'P0001';
+  end if;
+  v_previous := app.idem_claim(a.tenant_id,'price.reject',p_key,
+    pg_catalog.jsonb_build_object('requestId',p_id,'body',p_body));
+  if v_previous is not null then return v_previous; end if;
+
+  select * into r from biz.price_change_request where tenant_id = a.tenant_id and id = p_id for update;
+  if r.id is null then raise exception 'NOT_FOUND' using errcode = 'P0001'; end if;
+  if r.state <> 'PENDING' then raise exception 'PRICE_ALREADY_REVIEWED' using errcode = 'P0001'; end if;
+
+  -- Versi yang ditinjau adalah versi pada pengajuan. Produk boleh sudah berubah.
+  if r.expected_version <> (p_body->>'expectedVersion')::bigint then
+    raise exception 'VERSION_CONFLICT' using errcode = 'P0001';
+  end if;
+  update biz.price_change_request set state = 'REJECTED', rejected_by = a.user_id,
+    rejected_at = pg_catalog.clock_timestamp()
+    where tenant_id = a.tenant_id and id = p_id;
+  perform app.audit(a.tenant_id,a.user_id,'PRICE_REJECTED','price_change_request',p_id,
+    pg_catalog.jsonb_build_object('reason',pg_catalog.btrim(p_body->>'reason')));
+  return app.idem_finish(a.tenant_id,'price.reject',p_key,pg_catalog.jsonb_build_object(
+    'requestId',p_id,'state','REJECTED','replayed',false));
 end $$;
 
 create function app.price_list(p_product uuid) returns jsonb
-language plpgsql stable security definer set search_path=pg_catalog,pg_temp as $$
-declare a record;
+language plpgsql stable security definer set search_path = pg_catalog, pg_temp as $$
+declare a record; v_product_version bigint;
 begin
- select * into a from iam.current_actor();
- if not exists (select 1 from biz.product p where p.tenant_id=a.tenant_id and p.id=p_product)
-    then raise exception 'NOT_FOUND' using errcode='P0001'; end if;
- return pg_catalog.jsonb_build_object(
-   'rules',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-    'id',r.id,'packageId',r.package_version_id,'ruleType',r.rule_type,'minQty',r.min_qty,
-    'priceIdr',r.price_idr,'quotaUnits',r.quota_units,'usedUnits',r.used_units,
-    'startsAt',r.starts_at,'endsAt',r.ends_at,'approvedAt',r.approved_at)
-    order by r.approved_at,r.id)
-    from biz.price_rule_version r where r.tenant_id=a.tenant_id and r.product_id=p_product),'[]'::jsonb),
-   'requests',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-    'id',r.id,'packageId',r.package_version_id,'ruleType',r.rule_type,'state',r.state,
-    'expectedVersion',r.expected_version,'priceIdr',r.price_idr)
-    order by r.submitted_at,r.id)
-    from biz.price_change_request r where r.tenant_id=a.tenant_id and r.product_id=p_product),'[]'::jsonb));
+  select * into a from iam.current_actor();
+  perform app.inv_require_active(a.effective_status);
+  select p.version into v_product_version from biz.product p
+    where p.tenant_id = a.tenant_id and p.id = p_product;
+  if not found then raise exception 'NOT_FOUND' using errcode = 'P0001'; end if;
+
+  return pg_catalog.jsonb_build_object(
+    'packages',coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'packageId',v.id,'packageLabel',v.label,'packageFactor',v.factor,'current',latest.price)
+        order by v.label,v.id)
+      from biz.package_version v
+      left join lateral (
+        select pg_catalog.jsonb_build_object(
+          'id',r.id,'priceIdr',r.price_idr,'approvedAt',r.approved_at) as price
+        from biz.price_rule_version r
+        where r.tenant_id = v.tenant_id and r.product_id = v.product_id and r.package_version_id = v.id
+        order by r.approved_at desc,r.id desc limit 1
+      ) latest on true
+      where v.tenant_id = a.tenant_id and v.product_id = p_product and v.superseded_at is null
+    ),'[]'::jsonb),
+    'rules',coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id',r.id,'packageId',r.package_version_id,'priceIdr',r.price_idr,'approvedAt',r.approved_at)
+        order by r.approved_at,r.id)
+      from biz.price_rule_version r where r.tenant_id = a.tenant_id and r.product_id = p_product
+    ),'[]'::jsonb),
+    'requests',coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id',r.id,'packageId',r.package_version_id,'packageLabel',v.label,'packageFactor',v.factor,
+        'state',r.state,'expectedVersion',r.expected_version,'priceIdr',r.price_idr,'reason',r.reason,
+        'referenceDocument',r.source_document,'submittedAt',r.submitted_at,
+        'stale',r.state = 'PENDING' and r.expected_version <> v_product_version)
+        order by r.submitted_at,r.id)
+      from biz.price_change_request r
+      join biz.package_version v on v.tenant_id = r.tenant_id and v.product_id = r.product_id
+        and v.id = r.package_version_id
+      where r.tenant_id = a.tenant_id and r.product_id = p_product
+    ),'[]'::jsonb)
+  );
 end $$;
+
 reset role;
 revoke execute on all functions in schema app from public;
 grant execute on function app.price_submit(uuid,jsonb),app.price_approve(uuid,uuid,jsonb),
- app.price_list(uuid) to app_runtime;
+  app.price_reject(uuid,uuid,jsonb),app.price_list(uuid) to app_runtime;
