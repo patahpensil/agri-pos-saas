@@ -166,6 +166,23 @@ jobs:
           TEST_RESULTS_DIR: results/isolated-count-10
         run: node dist/test/run.js
 
+      - name: Validasi lima uji harga secara mandiri sebelum mutasi
+        id: price-positive-controls
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_SUITES: price
+        run: |
+          for case_id in PRICE-06 PRICE-07 PRICE-08 PRICE-17 PRICE-20; do
+            TEST_ONLY_IDS="$case_id" TEST_RESULTS_DIR="results/isolated-$case_id" node dist/test/run.js
+          done
+
       - name: Uji mutasi terisolasi (kontrol dihapus -> uji terkait wajib FAIL)
         if: always()
         env:
@@ -222,6 +239,27 @@ jobs:
           # Informatif: tanpa kunci akun, login tetap terserialisasi oleh kunci baris batas laju (lapis kedua).
           bash db/test/mutation.sh SESSION_LOCK AUD-SESSION-01 PASS || rc=1
           exit $rc
+
+      - name: Uji mutasi harga eceran
+        if: always() && steps.price-positive-controls.outcome == 'success'
+        env:
+          PGHOST: ${{ env.PGSOCK }}
+          PGUSER: postgres
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          RESULTS_DIR: ${{ github.workspace }}/backend/results
+        run: |
+          export PGPORT=$PGPORT_DIRECT
+          rc=0
+          bash db/test/mutation.sh PRICE_OWNER_APPROVAL PRICE-06 || rc=1
+          bash db/test/mutation.sh PRICE_REAUTH PRICE-07 || rc=1
+          bash db/test/mutation.sh PRICE_STALE PRICE-08 || rc=1
+          bash db/test/mutation.sh PRICE_FACTOR_LOCK PRICE-17 || rc=1
+          bash db/test/mutation.sh PRICE_REFERENCE PRICE-20 || rc=1
+          exit "$rc"
 
       - name: Gerbang hasil (semua ID wajib PASS di kedua target)
         if: always()
