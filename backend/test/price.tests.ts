@@ -1,4 +1,4 @@
-// Uji modul harga FREE/PRO: 16 skenario independen direct dan PgBouncer.
+// Uji modul harga FREE/PRO: 23 skenario independen direct dan PgBouncer.
 import { randomUUID } from "node:crypto";
 import { AddressInfo } from "node:net";
 import { createApp } from "../src/app";
@@ -39,8 +39,8 @@ async function product(token:string,subsidized=false):Promise<P>{
   return {id:String(r.body.productId),unit:p.packages.find(x=>x.label==="Unit")!.id,
     box:p.packages.find(x=>x.label==="Karton 12")!.id,version:p.version};
 }
-const input=(p:P,type:"RETAIL"|"WHOLESALE"|"PROMO"="RETAIL",extra:Record<string,unknown>={})=>({
-  productId:p.id,packageId:p.unit,ruleType:type,minQty:type==="WHOLESALE"?3:1,
+const input=(p:P,extra:Record<string,unknown>={})=>({
+  productId:p.id,packageId:p.unit,
   priceIdr:12500,expectedVersion:p.version,reason:"Harga dari Owner disahkan",
   referenceDocument:"DAFTAR-HARGA-01",...extra,
 });
@@ -53,8 +53,10 @@ async function reauth(token:string,id:string,v:number,password=PW):Promise<Resul
 const approve=(token:string,id:string,v:number,re:string,key=randomUUID(),referenceDocument?:string)=>
   http("POST","/price-change-requests/"+id+"/approve",token,
     {expectedVersion:v,reason:"Pemeriksaan harga Owner",reauthToken:re,referenceDocument},key);
-async function approved(token:string,p:P,type:"RETAIL"|"WHOLESALE"|"PROMO"="RETAIL",extra:Record<string,unknown>={}):Promise<Result>{
-  const sub=await submit(token,input(p,type,extra));eq(sub.status,201,"ajuan: "+sub.text);
+const reject=(token:string,id:string,v:number,key=randomUUID(),reason="Harga perlu ditinjau ulang")=>
+  http("POST","/price-change-requests/"+id+"/reject",token,{expectedVersion:v,reason},key);
+async function approved(token:string,p:P,extra:Record<string,unknown>={}):Promise<Result>{
+  const sub=await submit(token,input(p,extra));eq(sub.status,201,"ajuan: "+sub.text);
   const id=String(sub.body.requestId),g=await reauth(token,id,p.version);
   eq(g.status,201,"reauth: "+g.text);
   const res=await approve(token,id,p.version,String(g.body.reauthToken));
@@ -62,6 +64,22 @@ async function approved(token:string,p:P,type:"RETAIL"|"WHOLESALE"|"PROMO"="RETA
   return res;
 }
 const rows=async(sql:string,args:unknown[]=[])=>admin<{n:number}>(sql,args).then(x=>x[0].n);
+const auditDetails=async(tenant:string,id:string,kind:string)=>admin<{detail:Record<string,unknown>}>(
+  "select detail from biz.audit_event where tenant_id=$1 and entity_id=$2 and kind=$3",[tenant,id,kind],
+);
+type PriceFixture={
+  o:Awaited<ReturnType<typeof registerOwnerSql>>;
+  adm:Awaited<ReturnType<typeof inviteAndActivateAdminSql>>;
+};
+async function priceTest(id:string,title:string,run:(fixture:PriceFixture)=>Promise<string>):Promise<void>{
+  await test(id,K,title,async()=>{
+    const o=await registerOwnerSql("Kios "+id);
+    await makePro(o.tenant);
+    const adm=await inviteAndActivateAdminSql(o);
+    return run({o,adm});
+  });
+}
+
 export async function priceTests():Promise<void>{
   const cfg:AppConfig={
     mode:"test",port:0,
@@ -76,87 +94,96 @@ export async function priceTests():Promise<void>{
   await app.listen(0,"127.0.0.1");
   base="http://127.0.0.1:"+((app.getHttpServer().address() as AddressInfo).port)+"/api/v1";
   try{
-    const o=await registerOwnerSql("Kios Uji Harga PRO");
-    await makePro(o.tenant);
-    const adm=await inviteAndActivateAdminSql(o);
-    const free=await registerOwnerSql("Kios Uji Harga FREE");
-    const other=await registerOwnerSql("Kios Uji Harga Lain");
-    await makePro(other.tenant);
-
-    await test("PRICE-01",K,"Eceran terpisah untuk unit dan karton",async()=>{
+    await priceTest("PRICE-01","Eceran terpisah untuk unit dan karton",async({o})=>{
       const p=await product(o.token);
       await approved(o.token,p);
       const q={...p,version:2};
-      await approved(o.token,q,"RETAIL",{packageId:p.box,priceIdr:130000});
+      await approved(o.token,q,{packageId:p.box,priceIdr:130000});
       const r=await prices(o.token,p.id);eq(r.status,200,"GET harga");
       const rules=r.body.rules as {packageId:string;priceIdr:number}[];
       eq(rules.length,2,"dua harga");eq(rules.find(x=>x.packageId===p.unit)?.priceIdr,12500,"unit");
       eq(rules.find(x=>x.packageId===p.box)?.priceIdr,130000,"karton");
-      return "2 harga per varian, faktornya tetap berbeda";
+      return "2 varian: unit Rp12.500 dan karton Rp130.000";
     });
 
-    await test("PRICE-02",K,"Harga negatif, pecahan, dan string ditolak",async()=>{
+    await priceTest("PRICE-02","Harga negatif, pecahan, dan string ditolak",async({o})=>{
       const p=await product(o.token);
       for(const price of [-1,1.5,"12500"]){
-        const r=await submit(o.token,input(p,"RETAIL",{priceIdr:price}));
+        const r=await submit(o.token,input(p,{priceIdr:price}));
         eq(r.status,400,"harga tidak sah "+price);
       }
       eq(await rows("select count(*)::int n from biz.price_change_request where tenant_id=$1 and product_id=$2",[o.tenant,p.id]),0,"tidak tersimpan");
       return "3 payload harga tidak sah ditolak sebelum tulis";
     });
 
-    await test("PRICE-03",K,"FREE Owner bisa menetapkan eceran setelah reauth",async()=>{
+    await priceTest("PRICE-03","FREE Owner bisa menetapkan eceran setelah reauth",async()=>{
+      const free=await registerOwnerSql("Kios harga FREE");
       const p=await product(free.token);
-      await approved(free.token,p,"RETAIL",{priceIdr:15000});
+      await approved(free.token,p,{priceIdr:15000});
       const r=await prices(free.token,p.id);
-      eq((r.body.rules as unknown[]).length,1,"satu harga");
-      return "FREE Owner: proposal+reauth+approval eceran sah";
+      const rules=r.body.rules as {priceIdr:number}[];
+      eq(rules.length,1,"satu harga");eq(rules[0].priceIdr,15000,"nilai eceran FREE");
+      return "1 harga eceran FREE Rp15.000 terbit setelah reauth Owner";
     });
 
-    await test("PRICE-04",K,"FREE tidak dapat mengajukan grosir dan promo",async()=>{
-      const p=await product(free.token);
-      const q=[input(p,"WHOLESALE"),input(p,"PROMO",{quotaUnits:5,startsAt:"2030-01-01T00:00:00Z",endsAt:"2031-01-01T00:00:00Z"})];
-      for(const x of q){
-        const r=await submit(free.token,x);
-        eq(r.status,403,"FREE gated "+r.text);eq(r.body.code,"FEATURE_GATED_PLAN","kode");
+    await priceTest("PRICE-04","Field grosir dan promo ditolak oleh API dan database",async({o,adm})=>{
+      const p=await product(o.token);
+      const fields={
+        ruleType:"WHOLESALE",minQty:6,quotaUnits:5,
+        startsAt:"2030-01-01T00:00:00Z",endsAt:"2031-01-01T00:00:00Z",
+      };
+      for(const [field,value] of Object.entries(fields)){
+        const body={...input(p),[field]:value};
+        const r=await submit(adm.token,body);
+        eq(r.status,400,field+" ditolak API");
+        eq(await errOf(asActor(adm.token,"select app.price_submit($1,$2::jsonb)",[randomUUID(),body])),
+          "VALIDATION",field+" ditolak database");
       }
-      return "grosir dan promo FREE ditolak backend";
+      eq(await rows("select count(*)::int n from biz.price_change_request where tenant_id=$1",[o.tenant]),0,"tidak ada pengajuan");
+      return "5 field ditolak 400 oleh API dan VALIDATION oleh database; 0 pengajuan";
     });
 
-    await test("PRICE-05",K,"Admin PRO mengajukan; pengajuan belum menjadi harga aktif",async()=>{
+    await priceTest("PRICE-05","Admin PRO mengajukan; pengajuan belum menjadi harga aktif",async({o,adm})=>{
       const p=await product(o.token);
       const a=await submit(adm.token,input(p));
       eq(a.status,201,"admin mengajukan");
       const r=await prices(o.token,p.id);
       eq((r.body.rules as unknown[]).length,0,"harga tidak boleh aktif sebelum approval");
       eq((r.body.requests as {state:string}[])[0].state,"PENDING","status");
-      return "Admin submit PENDING; tidak ada rule aktif";
+      return "1 pengajuan Admin PENDING; 0 harga terbit";
     });
 
-    await test("PRICE-06",K,"Admin tidak boleh menyetujui harga",async()=>{
+    await priceTest("PRICE-06","Admin tidak boleh menyetujui harga",async({o,adm})=>{
       const p=await product(o.token),s=await submit(adm.token,input(p));
       eq(s.status,201,"ajuan");
       const r=await approve(adm.token,String(s.body.requestId),p.version,"a".repeat(64));
       eq(r.status,403,"Admin approve");eq(r.body.code,"FORBIDDEN_ROLE","kode");
-      eq((await prices(o.token,p.id)).body.rules instanceof Array,true,"harga");
-      eq((await prices(o.token,p.id)).body.rules instanceof Array && ((await prices(o.token,p.id)).body.rules as unknown[]).length,0,"no rule");
-      return "Admin approve => 403; tidak ada penerbitan harga";
+      const price=await prices(o.token,p.id);
+      eq(price.status,200,"Owner dapat memeriksa harga");
+      eq((price.body.rules as unknown[]).length,0,"tidak ada harga terbit");
+      return "1 persetujuan Admin ditolak 403 FORBIDDEN_ROLE; 0 harga terbit";
     });
 
-    await test("PRICE-07",K,"Owner reauth wajib, terikat pengajuan+versi dan satu kali",async()=>{
+    await priceTest("PRICE-07","Owner reauth wajib, terikat pengajuan+versi dan satu kali",async({o,adm})=>{
       const p=await product(o.token);
       const s=await submit(adm.token,input(p));
+      eq(s.status,201,"usulan Admin");
       const id=String(s.body.requestId);
+      const second=await submit(adm.token,input(p));
+      eq(second.status,201,"usulan lain pada versi yang sama");
       const forged=await approve(o.token,id,p.version,"f".repeat(64));
-      eq(forged.status,403,"token palsu");
+      eq(forged.status,403,"token palsu");eq(forged.body.code,"REAUTH_REQUIRED","kode reauth");
       const g=await reauth(o.token,id,p.version);eq(g.status,201,"reauth");
       const tok=String(g.body.reauthToken);
+      const wrongTarget=await approve(o.token,String(second.body.requestId),p.version,tok);
+      eq(wrongTarget.status,403,"token tidak berlaku untuk usulan berbeda");
+      eq(wrongTarget.body.code,"REAUTH_REQUIRED","target reauth");
       const ok1=await approve(o.token,id,p.version,tok);eq(ok1.status,200,"Owner approve");
       const replay=await approve(o.token,id,p.version,tok);eq(replay.status,409,"token tidak dapat menerbitkan lagi");
-      return "bukti palsu ditolak; satu reauth menerbitkan satu rule";
+      return "2 token tidak sah ditolak 403; 1 persetujuan 200; keputusan ulang 409";
     });
 
-    await test("PRICE-08",K,"Approval versi produk yang sudah berubah ditolak",async()=>{
+    await priceTest("PRICE-08","Approval versi produk yang sudah berubah ditolak",async({o,adm})=>{
       const p=await product(o.token),s=await submit(adm.token,input(p));
       const id=String(s.body.requestId);
       const patch=await http("PATCH","/products/"+p.id,o.token,{expectedVersion:1,name:"Produk berubah"});
@@ -165,17 +192,19 @@ export async function priceTests():Promise<void>{
       const r=await approve(o.token,id,1,String(g.body.reauthToken));
       eq(r.status,409,"stale");eq(r.body.code,"VERSION_CONFLICT","kode");
       eq((await prices(o.token,p.id)).body.rules instanceof Array && ((await prices(o.token,p.id)).body.rules as unknown[]).length,0,"tidak ada harga");
-      return "object_version berubah -> 409; harga tidak diterbitkan";
+      return "Versi 1 ditolak 409 setelah produk menjadi versi 2; 0 harga terbit";
     });
 
-    await test("PRICE-09",K,"Cross-tenant package tidak dapat diberi harga",async()=>{
+    await priceTest("PRICE-09","Cross-tenant package tidak dapat diberi harga",async({o})=>{
+      const other=await registerOwnerSql("Kios harga lain");
+      await makePro(other.tenant);
       const p=await product(o.token),foreign=await product(other.token);
-      const r=await submit(o.token,input(p,"RETAIL",{packageId:foreign.unit}));
+      const r=await submit(o.token,input(p,{packageId:foreign.unit}));
       eq(r.status,404,"package toko lain ditolak");
-      return "FK tenant dan pencarian package terikat tenant";
+      return "1 kemasan toko lain ditolak 404";
     });
 
-    await test("PRICE-10",K,"Pengajuan tak ditanggapi tetap PENDING tanpa perubahan harga",async()=>{
+    await priceTest("PRICE-10","Pengajuan tak ditanggapi tetap PENDING tanpa perubahan harga",async({o,adm})=>{
       const p=await product(o.token);
       const s=await submit(adm.token,input(p));eq(s.status,201,"ajuan");
       const first=await prices(o.token,p.id);
@@ -184,10 +213,10 @@ export async function priceTests():Promise<void>{
         eq((result.body.rules as unknown[]).length,0,"rule belum diterbitkan");
         eq((result.body.requests as {state:string}[])[0].state,"PENDING","status");
       }
-      return "pending tidak otomatis diapprove; koreksi/retur belum dibangun";
+      return "2 kali dibaca: 1 pengajuan tetap PENDING dan 0 harga terbit";
     });
 
-    await test("PRICE-11",K,"Idempotensi key sama dan isi beda ditolak",async()=>{
+    await priceTest("PRICE-11","Idempotensi key sama dan isi beda ditolak",async({o})=>{
       const p=await product(o.token),key=randomUUID(),b=input(p);
       const first=await submit(o.token,b,key),again=await submit(o.token,b,key);
       eq(first.status,201,"first");eq(again.status,201,"replay");
@@ -198,7 +227,7 @@ export async function priceTests():Promise<void>{
       return "1 proposal, retry aman, isi beda 409";
     });
 
-    await test("PRICE-12",K,"Permintaan harga serentak idempotent",async()=>{
+    await priceTest("PRICE-12","Permintaan harga serentak idempotent",async({o})=>{
       const p=await product(o.token),b=input(p),key=randomUUID();
       const results=await Promise.all(Array.from({length:8},()=>submit(o.token,b,key)));
       ok(results.every(x=>x.status===201),results.map(x=>x.text).join(" | "));
@@ -207,7 +236,7 @@ export async function priceTests():Promise<void>{
       return "8 request -> satu pengajuan";
     });
 
-    await test("PRICE-13",K,"Dua approval serentak tidak menerbitkan ganda",async()=>{
+    await priceTest("PRICE-13","Dua approval serentak tidak menerbitkan ganda",async({o})=>{
       const p=await product(o.token),s=await submit(o.token,input(p)),id=String(s.body.requestId);
       const g1=await reauth(o.token,id,p.version),g2=await reauth(o.token,id,p.version);
       eq(g1.status,201,"reauth1");eq(g2.status,201,"reauth2");
@@ -218,10 +247,10 @@ export async function priceTests():Promise<void>{
       eq(res.filter(x=>x.status===200).length,1,"satu approval");
       eq(res.filter(x=>x.status===409).length,1,"satu ditolak");
       eq(await rows("select count(*)::int n from biz.price_rule_version where tenant_id=$1 and request_id=$2",[o.tenant,id]),1,"satu rule");
-      return "dua Owner request concurrent => tepat satu rule";
+      return "2 persetujuan serentak: 1 respons 200, 1 respons 409, 1 harga terbit";
     });
 
-    await test("PRICE-14",K,"Riwayat harga append-only dan hak tabel runtime tertutup",async()=>{
+    await priceTest("PRICE-14","Riwayat harga append-only dan hak tabel runtime tertutup",async({o})=>{
       const p=await product(o.token),ap=await approved(o.token,p),rule=String(ap.body.ruleId);
       const bad=[
         await errOf(admin("update biz.price_rule_version set price_idr=1 where tenant_id=$1 and id=$2",[o.tenant,rule])),
@@ -230,34 +259,74 @@ export async function priceTests():Promise<void>{
       ok(bad.every(x=>x==="APPEND_ONLY"),bad.join("|"));
       const perm=await admin<{ok:boolean}>("select has_table_privilege('app_runtime','biz.price_rule_version','UPDATE') ok");
       eq(perm[0].ok,false,"runtime tidak boleh ubah tabel");
-      return "update/delete ditolak termasuk superuser; runtime tanpa privilege";
+      return "2 perubahan langsung oleh superuser ditolak; 0 hak UPDATE untuk runtime";
     });
 
-    await test("PRICE-15",K,"PRO menerima harga grosir dan promo berkuota tanpa mengurangi kuota saat draft",async()=>{
-      const p=await product(o.token);
-      await approved(o.token,p,"WHOLESALE",{minQty:6,priceIdr:11000});
-      await approved(o.token,{...p,version:2},"PROMO",{priceIdr:10000,quotaUnits:3,
-        startsAt:"2030-01-01T00:00:00Z",endsAt:"2031-01-01T00:00:00Z"});
-      const r=await prices(o.token,p.id),rules=r.body.rules as {ruleType:string;minQty:number;quotaUnits:number|null;usedUnits:number}[];
-      eq(rules.length,2,"dua aturan");
-      eq(rules.find(x=>x.ruleType==="WHOLESALE")?.minQty,6,"jumlah minimum");
-      eq(rules.find(x=>x.ruleType==="PROMO")?.quotaUnits,3,"kuota");
-      eq(rules.find(x=>x.ruleType==="PROMO")?.usedUnits,0,"draft tidak memakai kuota");
-      return "grosir minQty=6; promo quota=3 used=0 (checkout belum ada)";
+    await priceTest("PRICE-15","Hanya Owner dapat menolak pengajuan, termasuk yang sudah basi",async({o,adm})=>{
+      const original=await product(o.token);
+      const active=await approved(o.token,original,{priceIdr:150000});
+      const p={...original,version:Number(active.body.productVersion)};
+      const fresh=await submit(adm.token,input(p,{priceIdr:160000}));
+      eq(fresh.status,201,"Admin mengajukan");
+      const id=String(fresh.body.requestId);
+      const denied=await reject(adm.token,id,p.version);
+      eq(denied.status,403,"Admin tidak dapat menolak");
+      eq(denied.body.code,"FORBIDDEN_ROLE","kode Admin");
+      eq(await errOf(asActor(o.token,"select app.price_reject($1,$2,$3::jsonb)",
+        [randomUUID(),id,{expectedVersion:p.version,reason:"Tinjau lagi",extra:true}])),"VALIDATION","body DB strict");
+      const key=randomUUID();
+      const rejected=await reject(o.token,id,p.version,key);
+      eq(rejected.status,200,"ditolak Owner tanpa reauth");
+      eq(rejected.body.state,"REJECTED","status pengajuan");
+      const replay=await reject(o.token,id,p.version,key);
+      eq(replay.status,200,"ulang idempoten");
+      eq(replay.body.replayed,true,"respons tersimpan");
+      const changed=await reject(o.token,id,p.version,key,"Alasan yang berbeda");
+      eq(changed.status,409,"isi berbeda pada kunci sama ditolak");
+      eq(changed.body.code,"IDEMPOTENCY_PAYLOAD_MISMATCH","kode idempotensi");
+      const decided=await reject(o.token,id,p.version);
+      eq(decided.status,409,"pengajuan hanya boleh diputuskan sekali");
+      eq(decided.body.code,"PRICE_ALREADY_REVIEWED","kode keputusan");
+      ok(decided.text.includes("Pengajuan harga sudah diputuskan"),"pesan keputusan");
+      const grant=await reauth(o.token,id,p.version);
+      eq(grant.status,201,"reauth");
+      const after=await approve(o.token,id,p.version,String(grant.body.reauthToken));
+      eq(after.status,409,"tidak dapat menyetujui pengajuan yang ditolak");
+      eq(after.body.code,"PRICE_ALREADY_REVIEWED","kode keputusan");
+      eq(await rows("select version::int n from biz.product where tenant_id=$1 and id=$2",[o.tenant,p.id]),p.version,"versi tetap");
+      const rules=(await prices(o.token,p.id)).body.rules as {priceIdr:number}[];
+      eq(rules.length,1,"satu harga");eq(rules[0].priceIdr,150000,"harga tetap");
+      const review=await auditDetails(o.tenant,id,"PRICE_REJECTED");
+      eq(review.length,1,"satu audit penolakan");
+      eq(review[0].detail.reason,"Harga perlu ditinjau ulang","alasan penolakan");
+      eq(await rows(`select count(*)::int n from biz.price_change_request where tenant_id=$1 and id=$2
+        and state='REJECTED' and rejected_by is not null and rejected_at is not null
+        and approved_by is null and approved_at is null`,[o.tenant,id]),1,"metadata keputusan konsisten");
+
+      const pending=await submit(adm.token,input(p,{priceIdr:165000}));
+      eq(pending.status,201,"pengajuan sebelum edit produk");
+      const patch=await http("PATCH","/products/"+p.id,o.token,{expectedVersion:p.version,name:"Nama baru"});
+      eq(patch.status,200,"ubah versi produk");
+      const stale=await reject(o.token,String(pending.body.requestId),p.version);
+      eq(stale.status,200,"pengajuan basi tetap bisa ditolak");
+      eq(stale.body.state,"REJECTED","keputusan pengajuan basi");
+      eq(await rows("select version::int n from biz.product where tenant_id=$1 and id=$2",[o.tenant,p.id]),p.version+1,"versi hanya berubah karena edit produk");
+      return "2 penolakan Owner mendapat 200; Admin 403; keputusan ulang 409; harga tetap Rp150.000";
     });
 
-    await test("PRICE-16",K,"Subsidi tidak boleh mendapat harga POS umum; payload asing ditolak",async()=>{
+    await priceTest("PRICE-16","Subsidi tidak boleh mendapat harga POS umum; payload asing ditolak",async({o})=>{
+      const other=await registerOwnerSql("Kios harga lain");
       const p=await product(o.token,true);
       const blocked=await submit(o.token,input(p));
       eq(blocked.status,409,"subsidi block");eq(blocked.body.code,"SUBSIDY_PRICE_SEPARATE","kode");
       const normal=await product(o.token);
       const forged=await submit(o.token,{...input(normal),tenant_id:other.tenant});
       eq(forged.status,400,"tenant_id ditolak");
-      return "subsidi terpisah, tenant_id asing ditolak";
+      return "1 pupuk subsidi ditolak 409; 1 tenant_id asing ditolak 400";
     });
-    await test("PRICE-17",K,"Faktor kemasan berharga yang disetujui terkunci sejak stok nol",async()=>{
+    await priceTest("PRICE-17","Faktor kemasan berharga yang disetujui terkunci sejak stok nol",async({o,adm})=>{
       const p=await product(o.token);
-      const approval=await approved(o.token,p,"RETAIL",{packageId:p.box,priceIdr:120000});
+      const approval=await approved(o.token,p,{packageId:p.box,priceIdr:120000});
       const version=Number(approval.body.productVersion);
       const patch=await http("PATCH","/products/"+p.id,adm.token,{
         expectedVersion:version,packages:{update:[{id:p.box,factor:24}]},
@@ -277,7 +346,7 @@ export async function priceTests():Promise<void>{
       eq(rules[0].packageId,p.box,"harga tetap melekat pada kemasan isi 12");
       eq(rules[0].priceIdr,120000,"harga yang disetujui");
       const racing=await product(o.token);
-      const proposal=await submit(adm.token,input(racing,"RETAIL",{packageId:racing.box,priceIdr:120000}));
+      const proposal=await submit(adm.token,input(racing,{packageId:racing.box,priceIdr:120000}));
       eq(proposal.status,201,"pengajuan untuk uji serentak");
       const requestId=String(proposal.body.requestId);
       const grant=await reauth(o.token,requestId,racing.version);
@@ -295,68 +364,37 @@ export async function priceTests():Promise<void>{
         reviewWon?12:24,"isi setelah operasi serentak");
       eq(await rows("select count(*)::int n from biz.price_rule_version where tenant_id=$1 and request_id=$2",[o.tenant,requestId]),
         reviewWon?1:0,"harga setelah operasi serentak");
-      return "Faktor varian berharga terkunci; varian baru tanpa harga; approval dan edit serentak tidak tumpang tindih";
+      return "Karton isi 12 berharga Rp120.000 tetap; karton isi 24 baru tanpa harga; dari 2 operasi serentak hanya 1 berhasil";
     });
 
-    await test("PRICE-18",K,"Owner membaca rincian promo dan persetujuan mencatat dokumen rujukan",async()=>{
+    await priceTest("PRICE-18","Owner membaca pengajuan Admin dan audit menyimpan dokumen rujukan",async({o,adm})=>{
       const p=await product(o.token);
-      const startsAt="2030-01-01T00:00:00Z",endsAt="2031-01-01T00:00:00Z";
-      const reason="Promo pembelian karton";
-      const s=await submit(adm.token,input(p,"PROMO",{
-        packageId:p.box,priceIdr:100000,quotaUnits:3,startsAt,endsAt,reason,referenceDocument:undefined,
-      }));
-      eq(s.status,201,"pengajuan promo: "+s.text);
+      const reason="Pemasok menaikkan harga satu karton",reference="DAFTAR-HARGA-KARTON-01";
+      const s=await submit(adm.token,input(p,{packageId:p.box,priceIdr:150000,reason,referenceDocument:reference}));
+      eq(s.status,201,"pengajuan karton: "+s.text);
       const id=String(s.body.requestId);
       const list=await prices(o.token,p.id);
       eq(list.status,200,"Owner membuka rincian: "+list.text);
       const [proposal]=list.body.requests as Record<string,unknown>[];
       eq(proposal.id,id,"ID pengajuan");eq(proposal.packageId,p.box,"varian");
-      eq(proposal.packageLabel,"Karton 12","label kemasan");eq(proposal.packageFactor,12,"isi kemasan");
+      eq(proposal.packageLabel,"Karton 12","label");eq(proposal.packageFactor,12,"isi kemasan");
       eq(proposal.state,"PENDING","status");eq(proposal.expectedVersion,p.version,"versi");
-      eq(proposal.ruleType,"PROMO","jenis");eq(proposal.priceIdr,100000,"harga");
-      eq(proposal.minQty,1,"minimum");eq(proposal.quotaUnits,3,"kuota");
-      eq(Date.parse(String(proposal.startsAt)),Date.parse(startsAt),"mulai");
-      eq(Date.parse(String(proposal.endsAt)),Date.parse(endsAt),"berakhir");
-      eq(proposal.reason,reason,"alasan");eq(proposal.referenceDocument,null,"rujukan belum diisi");
-      const key=randomUUID();
+      eq(proposal.priceIdr,150000,"harga");eq(proposal.reason,reason,"alasan");
+      eq(proposal.referenceDocument,reference,"rujukan dari Admin");
       const grant=await reauth(o.token,id,p.version);
-      eq(grant.status,201,"reauth: "+grant.text);
-      const token=String(grant.body.reauthToken);
-      const noReference=await approve(o.token,id,p.version,token,key);
-      eq(noReference.status,400,"persetujuan tanpa rujukan ditolak");
-      eq(noReference.body.code,"PRICE_REFERENCE_REQUIRED","rujukan wajib di database");
-      eq(await rows("select count(*)::int n from biz.price_rule_version where tenant_id=$1 and request_id=$2",[o.tenant,id]),0,"harga belum terbit");
-      const reference="PENETAPAN-PROMO-01";
-      const accepted=await approve(o.token,id,p.version,token,key,reference);
-      eq(accepted.status,200,"ulang dengan rujukan sah: "+accepted.text);
-      const replay=await approve(o.token,id,p.version,token,key,reference);
-      eq(replay.status,200,"ulang permintaan yang telah berhasil");
-      eq(replay.body.ruleId,accepted.body.ruleId,"harga yang sama");
-      eq(replay.body.replayed,true,"penanda ulang");
-      const [audit]=await admin<{detail:Record<string,unknown>}>(
-        "select detail from biz.audit_event where tenant_id=$1 and entity_id=$2 and kind='PRICE_APPROVED'",[o.tenant,id]);
-      eq(audit.detail.referenceDocument,reference,"dokumen pada jejak audit");
-      eq(audit.detail.reason,"Pemeriksaan harga Owner","alasan pada jejak audit");
-      ok(typeof audit.detail.reauthGrantId==="string","ID reauth pada jejak audit");
-
-      const next=await submit(adm.token,input({...p,version:Number(accepted.body.productVersion)},"WHOLESALE",{
-        minQty:6,referenceDocument:"DAFTAR-GROSIR-02",
-      }));
-      eq(next.status,201,"pengajuan grosir: "+next.text);
-      const nextId=String(next.body.requestId);
-      const detail=await prices(o.token,p.id);
-      const wholesale=(detail.body.requests as Record<string,unknown>[]).find(r=>r.id===nextId);
-      eq(wholesale?.minQty,6,"minimum grosir terlihat");
-      eq(wholesale?.referenceDocument,"DAFTAR-GROSIR-02","rujukan pengajuan terlihat");
-      const nextVersion=Number(next.body.expectedVersion);
-      const nextGrant=await reauth(o.token,nextId,nextVersion);
-      eq(nextGrant.status,201,"reauth grosir: "+nextGrant.text);
-      const inherited=await approve(o.token,nextId,nextVersion,String(nextGrant.body.reauthToken));
-      eq(inherited.status,200,"rujukan usulan dapat dipakai saat persetujuan: "+inherited.text);
-      return "Rincian promo dan grosir terbaca; persetujuan tanpa rujukan ditolak; rujukan dan reauth tercatat";
+      eq(grant.status,201,"reauth");
+      const accepted=await approve(o.token,id,p.version,String(grant.body.reauthToken));
+      eq(accepted.status,200,"pakai rujukan dari pengajuan");
+      const [audit]=await auditDetails(o.tenant,id,"PRICE_APPROVED");
+      eq(audit.detail.referenceDocument,reference,"dokumen di audit");
+      eq(audit.detail.selfSubmitted,false,"pengajuan dibuat Admin");
+      eq(audit.detail.reason,"Pemeriksaan harga Owner","alasan Owner");
+      ok(typeof audit.detail.reauthGrantId==="string","ID reauth di audit");
+      return "1 pengajuan Admin untuk karton isi 12, Rp150.000; rujukan dan selfSubmitted=false tercatat";
     });
 
-    await test("PRICE-19",K,"Sesi sah tidak dapat membaca harga setelah FREE/PRO berakhir",async()=>{
+    await priceTest("PRICE-19","Sesi sah tidak dapat membaca harga setelah FREE/PRO berakhir",async({o,adm})=>{
+      const free=await registerOwnerSql("Kios harga FREE");
       const proProduct=await product(o.token),freeProduct=await product(free.token);
       await approved(o.token,proProduct);
       await submit(free.token,input(freeProduct));
@@ -373,7 +411,102 @@ export async function priceTests():Promise<void>{
         eq(locked.body.code,"TENANT_LOCKED","kode paket berakhir");
         eq(await errOf(asActor(token,"select app.price_list($1)",[productId])),"TENANT_LOCKED","cek langsung di DB");
       }
-      return "FREE Owner dan PRO Owner/Admin diblokir pada API dan fungsi DB selama masa jeda";
+      return "3 sesi aktif (1 FREE, 2 PRO) ditolak 403 oleh API dan TENANT_LOCKED di database";
+    });
+
+    await priceTest("PRICE-20","Rujukan wajib untuk pengajuan Admin dan opsional untuk pengajuan sendiri",async({o,adm})=>{
+      const free=await registerOwnerSql("Kios PRICE-20 FREE");
+      const p=await product(o.token);
+      await approved(o.token,p,{priceIdr:150000});
+      const updated={...p,version:p.version+1};
+      const proposal=await submit(adm.token,input(updated,{priceIdr:160000,referenceDocument:undefined}));
+      eq(proposal.status,201,"Admin boleh mengajukan tanpa rujukan");
+      const id=String(proposal.body.requestId);
+      const grant=await reauth(o.token,id,updated.version);
+      eq(grant.status,201,"reauth");
+      const token=String(grant.body.reauthToken),key=randomUUID();
+      const blocked=await approve(o.token,id,updated.version,token,key);
+      eq(blocked.status,400,"persetujuan tanpa rujukan ditolak");
+      eq(blocked.body.code,"PRICE_REFERENCE_REQUIRED","kode rujukan wajib");
+      const latest=(await prices(o.token,p.id)).body.packages as {packageId:string;current:{priceIdr:number}|null}[];
+      eq(latest.find(v=>v.packageId===p.unit)?.current?.priceIdr,150000,"harga tetap sebelum ada rujukan");
+      const ref="RAPAT-HARGA-02";
+      const accepted=await approve(o.token,id,updated.version,token,key,ref);
+      eq(accepted.status,200,"persetujuan dengan rujukan di body");
+      const replay=await approve(o.token,id,updated.version,token,key,ref);
+      eq(replay.status,200,"ulangi permintaan yang berhasil");
+      eq(replay.body.ruleId,accepted.body.ruleId,"satu versi harga");
+      eq(replay.body.replayed,true,"penanda replay");
+      const [review]=await auditDetails(o.tenant,id,"PRICE_APPROVED");
+      eq(review.detail.referenceDocument,ref,"rujukan dari body");
+      eq(review.detail.selfSubmitted,false,"pengajuan Admin");
+      const after=(await prices(o.token,p.id)).body.packages as {packageId:string;current:{priceIdr:number}|null}[];
+      eq(after.find(v=>v.packageId===p.unit)?.current?.priceIdr,160000,"harga baru terbit");
+      for(const owner of [free,o]){
+        const own=await product(owner.token);
+        const result=await approved(owner.token,own,{priceIdr:12500,referenceDocument:undefined});
+        const [audit]=await auditDetails(owner.tenant,String(result.body.requestId),"PRICE_APPROVED");
+        eq(audit.detail.referenceDocument,null,"rujukan opsional");
+        eq(audit.detail.selfSubmitted,true,"pengajuan sendiri");
+      }
+      return "Admin: Rp150.000 tetap saat 400; dengan rujukan menjadi Rp160.000. 2 Owner FREE/PRO: Rp12.500 masing-masing tanpa rujukan";
+    });
+
+    await priceTest("PRICE-21","Harga berlaku per kemasan dan penanda versi pengajuan",async({o,adm})=>{
+      const p=await product(o.token);
+      await approved(o.token,p,{packageId:p.box,priceIdr:150000});
+      const second={...p,version:p.version+1};
+      const old=await submit(adm.token,input(second,{packageId:p.box,priceIdr:151000}));
+      eq(old.status,201,"pengajuan yang akan menjadi basi");
+      await approved(o.token,second,{packageId:p.box,priceIdr:155000});
+      const fresh=await submit(adm.token,input({...second,version:second.version+1},{packageId:p.box,priceIdr:156000}));
+      eq(fresh.status,201,"pengajuan segar");
+      const list=await prices(o.token,p.id);
+      eq(list.status,200,"daftar harga");
+      const packs=list.body.packages as {packageId:string;current:{priceIdr:number}|null}[];
+      eq(packs.length,2,"dua kemasan aktif");
+      eq(packs.find(v=>v.packageId===p.box)?.current?.priceIdr,155000,"harga terbaru");
+      eq(packs.find(v=>v.packageId===p.unit)?.current,null,"kemasan lain belum berharga");
+      const requests=list.body.requests as {id:string;state:string;stale:boolean}[];
+      eq(requests.find(q=>q.id===old.body.requestId)?.stale,true,"usulan Rp151.000 basi");
+      eq(requests.find(q=>q.id===fresh.body.requestId)?.stale,false,"usulan Rp156.000 segar");
+      const approvals=requests.filter(q=>q.state==="APPROVED");
+      eq(approvals.length,2,"dua harga pernah disetujui");
+      ok(approvals.every(q=>q.stale===false),"pengajuan yang telah diputuskan tidak ditandai basi");
+      return "Karton Rp150.000 menjadi Rp155.000; unit null; usulan Rp151.000 basi dan Rp156.000 segar";
+    });
+
+    await priceTest("PRICE-22","Database menolak body pengajuan yang tidak sah",async({o,adm})=>{
+      const p=await product(o.token);
+      const valid=input(p);
+      const invalid=[
+        {...valid,unrecognized:true},{...valid,expectedVersion:undefined},
+        input(p,{priceIdr:1.25}),input(p,{priceIdr:"12500"}),input(p,{priceIdr:-1}),
+        input(p,{priceIdr:1_000_000_000_000_001}),input(p,{expectedVersion:"1"}),
+        input(p,{reason:" \t\n"}),input(p,{referenceDocument:"  "}),input(p,{productId:"invalid"}),
+      ];
+      for(const body of invalid){
+        eq(await errOf(asActor(adm.token,"select app.price_submit($1,$2::jsonb)",[randomUUID(),body])),
+          "VALIDATION","body ditolak database: "+JSON.stringify(body));
+      }
+      eq(await rows("select count(*)::int n from biz.price_change_request where tenant_id=$1",[o.tenant]),0,"tidak ada pengajuan");
+      eq(await rows("select count(*)::int n from biz.idempotency where tenant_id=$1 and operation='price.request'",[o.tenant]),0,"tidak ada kunci terpakai");
+      return "10 body ditolak VALIDATION oleh database; 0 pengajuan dan 0 kunci terpakai";
+    });
+
+    await priceTest("PRICE-23","Rp0 membutuhkan alasan dan ditandai di respons serta audit",async({o})=>{
+      const p=await product(o.token);
+      const invalid=await submit(o.token,input(p,{priceIdr:0,reason:"  "}));
+      eq(invalid.status,400,"Rp0 tanpa alasan tidak boleh diajukan");
+      const zero=await approved(o.token,p,{priceIdr:0,reason:"Sampel gratis",referenceDocument:undefined});
+      eq(zero.body.zeroPrice,true,"respons Rp0");
+      const [zeroAudit]=await auditDetails(o.tenant,String(zero.body.requestId),"PRICE_APPROVED");
+      eq(zeroAudit.detail.zeroPrice,true,"audit Rp0");
+      const standard=await approved(o.token,{...p,version:p.version+1},{priceIdr:150000});
+      eq(standard.body.zeroPrice,false,"respons Rp150.000");
+      const [standardAudit]=await auditDetails(o.tenant,String(standard.body.requestId),"PRICE_APPROVED");
+      eq(standardAudit.detail.zeroPrice,false,"audit Rp150.000");
+      return "Rp0 tanpa alasan ditolak 400; Rp0 dengan alasan 200 dan zeroPrice=true; Rp150.000 zeroPrice=false";
     });
   }finally{
     await app.close();await db.close();
