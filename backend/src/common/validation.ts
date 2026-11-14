@@ -257,27 +257,22 @@ export const schemas = {
       || (["inventory.count.approve", "price.approve"].includes(r.action) && !!r.scope && "expectedVersion" in r.scope),
       "scope harus sesuai aksi reautentikasi"),
   priceRequest: z.object({
-    productId: uuid, packageId: uuid,
-    ruleType: z.enum(["RETAIL", "WHOLESALE", "PROMO"]),
-    minQty: z.number().int().min(1).max(10000000),
-    priceIdr: rupiah, quotaUnits: z.number().int().min(1).max(10000000).optional(),
-    startsAt: z.string().datetime({ offset: true }).optional(),
-    endsAt: z.string().datetime({ offset: true }).optional(),
+    productId: uuid,
+    packageId: uuid,
+    priceIdr: rupiah,
     expectedVersion: z.number().int().min(1),
-    reason, referenceDocument: z.string().trim().min(1).max(120).optional(),
-  }).strict().superRefine((r, ctx) => {
-    const temporal=r.startsAt!==undefined||r.endsAt!==undefined;
-    const quota=r.quotaUnits!==undefined;
-    const valid=r.ruleType==="RETAIL" ? r.minQty===1&&!temporal&&!quota
-      : r.ruleType==="WHOLESALE" ? r.minQty>=2&&!temporal&&!quota
-      : r.minQty===1&&quota&&!!r.startsAt&&!!r.endsAt&&Date.parse(r.endsAt)>Date.parse(r.startsAt);
-    if(!valid)ctx.addIssue({code:"custom",message:"aturan harga tidak sah"});
-  }),
+    reason,
+    referenceDocument: z.string().trim().min(1).max(120).optional(),
+  }).strict(),
   priceApprove: z.object({
     expectedVersion: z.number().int().min(1),
     reason,
     referenceDocument: z.string().trim().min(1).max(120).optional(),
     reauthToken: z.string().regex(/^[0-9a-f]{64}$/),
+  }).strict(),
+  priceReject: z.object({
+    expectedVersion: z.number().int().min(1),
+    reason,
   }).strict(),
   holdsQuery: z.object({ active: z.enum(["true", "false"]).optional() }).strict(),
 };

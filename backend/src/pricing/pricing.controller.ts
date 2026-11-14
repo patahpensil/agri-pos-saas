@@ -31,6 +31,16 @@ export class PricingController {
       "select app.price_approve($1,$2,$3::jsonb) as r",[this.key(key),id.toLowerCase(),JSON.stringify(b)])));
     return r.rows[0].r;
   }
+  @Post("price-change-requests/:id/reject")
+  @HttpCode(200)
+  async reject(@Req() req:AuthedRequest,@Param("id") id:string,
+    @Headers("idempotency-key") key:string|undefined,@Body() body:unknown) {
+    const b=parseBody(schemas.priceReject,body);
+    if(!isUuid(id))throw notFound();
+    const r=await db(this.dbs.withActor(req.sessionToken!,c=>c.query<{r:Record<string,unknown>}>(
+      "select app.price_reject($1,$2,$3::jsonb) as r",[this.key(key),id.toLowerCase(),JSON.stringify(b)])));
+    return r.rows[0].r;
+  }
   @Get("products/:id/prices")
   async prices(@Req() req:AuthedRequest,@Param("id") id:string) {
     if(!isUuid(id))throw notFound();

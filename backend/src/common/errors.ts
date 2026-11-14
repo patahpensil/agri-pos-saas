@@ -34,7 +34,7 @@ const DB_CODES: Record<string, [number, string]> = {
   COST_BASIS_INVALID: [400, "Basis biaya stok awal tidak sah"],
   OPENING_REQUIRED: [400, "Stok awal wajib diisi (boleh 0)"],
   SUBSIDY_PRICE_SEPARATE: [409, "Harga pupuk subsidi wajib melalui ketentuan HET"],
-  PRICE_ALREADY_REVIEWED: [409, "Pengajuan harga sudah disetujui"],
+  PRICE_ALREADY_REVIEWED: [409, "Pengajuan harga sudah diputuskan"],
   PRICE_REFERENCE_REQUIRED: [400, "Dokumen rujukan wajib untuk menyetujui harga"],
   // Inventori
   PACKAGE_INVALID: [400, "Varian kemasan tidak sah untuk produk ini"],
