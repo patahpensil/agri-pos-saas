@@ -4,7 +4,7 @@ import { createApp } from "../src/app";
 import { AppConfig } from "../src/config/config";
 import { setLogSink } from "../src/common/log";
 import { OtpSender } from "../src/auth/otp-sender";
-import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, eq, harnessSender, makePro, newDevice, newPhone, ok, test, waitFor } from "./harness";
+import { DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, containsSecret, eq, harnessSender, makePro, newDevice, newPhone, ok, test, waitFor } from "./harness";
 
 const K = "API";
 const LOGS: string[] = [];
@@ -483,15 +483,15 @@ export async function apiTests(): Promise<void> {
       const phone = newPhone();
       const start = await http("POST", "/auth/register/start", { phone });
       const code = await otpOf(phone);
-      ok(!start.text.includes(code), "kode di respons");
+      ok(!containsSecret(start.text, code), "kode di respons");
       const body = { phone, code, password: PW, businessName: "Kios OTP API", timezone: "Asia/Makassar", deviceId: newDevice() };
       const first = await http("POST", "/auth/register/verify-otp", body);
       const replay = await http("POST", "/auth/register/verify-otp", { ...body, businessName: "Lagi" });
       eq(first.status, 201, "pakai pertama");
       eq(replay.status, 400, "replay");
-      ok(!replay.text.includes(code), "kode di error");
+      ok(!containsSecret(replay.text, code), "kode di error");
       const all = LOGS.join("\n");
-      ok(!all.includes(code) && !all.includes(TEST_OTP_MAC_KEY.toString()), "kode/kunci di log");
+      ok(!containsSecret(all, code) && !all.includes(TEST_OTP_MAC_KEY.toString()), "kode/kunci di log");
       return "kode diterima pengirim sah; 201 lalu replay 400; kode & kunci tidak ada di respons/error/log";
     });
 
@@ -592,7 +592,7 @@ export async function apiTests(): Promise<void> {
 
     await test("T-SEC-03", "uji log","Log tidak memuat OTP, sandi, token, atau nomor HP utuh", async () => {
       const all = LOGS.join("\n");
-      const leaks = [...SECRETS].filter((s) => s.length >= 6 && all.includes(s));
+      const leaks = [...SECRETS].filter((s) => s.length >= 6 && containsSecret(all, s));
       const phones = all.match(/\+62[0-9]{8,13}/g) ?? [];
       eq(leaks.length, 0, `rahasia muncul di log: ${leaks.slice(0, 3).map((s) => s.slice(0, 4) + "…").join(",")}`);
       eq(phones.length, 0, "nomor HP muncul di log");
