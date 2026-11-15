@@ -84,6 +84,17 @@ function cash(lines: QuotedLine[], total: string, change = "0") {
   };
 }
 
+type Part = Record<string, unknown>;
+function mixed(lines: QuotedLine[], payments: Part[]) {
+  return { ...cash(lines, "0"), payments };
+}
+function external(method: "TRANSFER" | "QRIS" | "EDC", amount: string, reference: string | null = null): Part {
+  return { method, net_received_idr: amount, reference, proof_checked: true };
+}
+function cashPart(net: string, change = "0"): Part {
+  return { method: "CASH", tendered_idr: String(BigInt(net) + BigInt(change)), change_idr: change, net_received_idr: net };
+}
+
 async function states(owner: Owner, p: Product) {
   const [result] = await admin<{ qty: number; sales: number; payments: number; ledger: number; audit: number; value: string }>(`
     select
@@ -134,7 +145,7 @@ export async function salesTests() {
       eq(after.sales, 1, "satu Sale"); eq(after.payments, 1, "satu pembayaran"); eq(after.ledger, 1, "satu mutasi");
       const saved = await request(`/sales/${results[0].body.sale_id}`, owner.token);
       response(saved, 200);
-      const payment = saved.body.payment as Record<string, unknown>;
+      const [payment] = saved.body.payments as Record<string, unknown>[];
       eq(payment.method, "CASH", "metode");
       eq(payment.tendered_idr, "20000", "tunai diserahkan");
       eq(payment.change_idr, "5000", "kembalian");
@@ -289,7 +300,7 @@ export async function salesTests() {
       await admin("delete from biz.cost_pool where tenant_id=$1 and product_id=$2 and status='SALEABLE'", [owner.tenant, b.line.product_id]);
       const q = await quote(owner.token, a.line, b.line);
       const key = randomUUID(), body = cash(q.lines, "30000");
-      response(await request("/sales", owner.token, cash(q.lines, "29000"), randomUUID()), 409, "SALE_CASH_MISMATCH");
+      response(await request("/sales", owner.token, cash(q.lines, "29000"), randomUUID()), 409, "SALE_PAYMENT_MISMATCH");
       response(await request("/sales", owner.token, body, key), 409, "INVENTORY_INCONSISTENT");
       const one = await states(owner, a), two = await states(owner, b);
       ok(one.qty === 2 && two.qty === 2 && one.sales + one.payments + one.ledger + one.audit + two.ledger === 0,
@@ -302,6 +313,142 @@ export async function salesTests() {
       response(result, 201);
       eq(result.body.receipt_number, "1", "retry tidak menghabiskan nomor");
       return "2 item, item kedua gagal HPP → 0 penjualan, 0 uang, 0 mutasi; retry yang sama → struk 1";
+    });
+
+    await test("ST-PAY-02", KIND, "Tunai dan transfer pada satu tagihan tercatat per bagian tanpa kelebihan", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 5);
+      const q = await quote(owner.token, { ...p.line, quantity: 2 });
+      eq(q.grand_total_idr, "30000", "dua unit Rp15.000");
+      response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "20000"), cashPart("15000")]),
+        randomUUID()), 409, "SALE_PAYMENT_MISMATCH");
+      response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "40000")]), randomUUID()),
+        409, "SALE_PAYMENT_MISMATCH");
+      response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "10000")]), randomUUID()),
+        409, "SALE_PAYMENT_MISMATCH");
+      response(await request("/sales", owner.token, mixed(q.lines, [cashPart("15000"), cashPart("15000")]), randomUUID()),
+        400, "VALIDATION_ERROR");
+      response(await request("/sales", owner.token, mixed(q.lines, [{ ...external("TRANSFER", "30000"), change_idr: "0" }]),
+        randomUUID()), 400, "VALIDATION_ERROR");
+      response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "20000"),
+        { method: "CASH", tendered_idr: "20000", change_idr: "5000", net_received_idr: "10000" }]), randomUUID()),
+      409, "SALE_CASH_MISMATCH");
+      eq((await states(owner, p)).sales, 0, "penolakan tidak membuat penjualan");
+      const sale = await request("/sales", owner.token, mixed(q.lines,
+        [external("TRANSFER", "20000", "BRI 0912-7781"), cashPart("10000", "10000")]), randomUUID());
+      response(sale, 201);
+      eq(sale.body.cash_change_idr, "10000", "kembalian hanya dari tunai");
+      const saved = await request(`/sales/${sale.body.sale_id}`, owner.token);
+      response(saved, 200);
+      const parts = saved.body.payments as Record<string, unknown>[];
+      eq(parts.length, 2, "dua bagian");
+      eq(parts.map((x) => x.method).join(","), "TRANSFER,CASH", "urutan bagian");
+      eq(parts[0].net_received_idr, "20000", "transfer"); eq(parts[0].tendered_idr, null, "transfer tanpa uang diserahkan");
+      eq(parts[0].change_idr, "0", "transfer tanpa kembalian"); eq(parts[0].reference, "BRI 0912-7781", "referensi");
+      eq(parts[1].tendered_idr, "20000", "uang tunai diserahkan"); eq(parts[1].change_idr, "10000", "kembalian");
+      eq(parts[1].net_received_idr, "10000", "tunai bersih");
+      const [actor] = await admin<{ user_id: string }>(`select m.user_id from iam.membership m
+        where m.tenant_id=$1 and m.role='OWNER'`, [owner.tenant]);
+      for (const part of parts) {
+        eq(part.verification_status, "VERIFIED", "status verifikasi");
+        eq(part.verified_by, actor.user_id, "pemeriksa"); ok(part.verified_at, "waktu periksa");
+      }
+      const after = await states(owner, p);
+      eq(after.qty, 3, "stok berkurang 2"); eq(after.sales, 1, "satu penjualan"); eq(after.payments, 2, "dua bagian bayar");
+      return "Tagihan Rp30.000: transfer Rp20.000 + tunai Rp20.000 kembali Rp10.000; lebih/kurang bayar 409";
+    });
+
+    await test("PAY-METHOD-01", KIND, "Transfer, QRIS, dan EDC hanya dicatat setelah bukti diperiksa", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 4);
+      const q = await quote(owner.token, p.line);
+      const unchecked = { ...external("QRIS", "15000"), proof_checked: false };
+      response(await request("/sales", owner.token, mixed(q.lines, [unchecked]), randomUUID()), 400, "PAYMENT_PROOF_REQUIRED");
+      response(await request("/sales", owner.token, mixed(q.lines, [{ method: "EDC", net_received_idr: "15000" }]), randomUUID()),
+        400, "VALIDATION_ERROR");
+      response(await request("/sales", owner.token, mixed(q.lines, [{ method: "GOPAY", net_received_idr: "15000",
+        proof_checked: true }]), randomUUID()), 400, "VALIDATION_ERROR");
+      eq((await states(owner, p)).sales, 0, "bukti belum diperiksa tidak menjadi penjualan");
+      const methods = [] as string[];
+      for (const part of [external("TRANSFER", "15000", "TRF-1"), external("QRIS", "15000"),
+        { method: "EDC", net_received_idr: "15000", proof_checked: true }]) {
+        const fresh = await quote(owner.token, p.line);
+        const sale = await request("/sales", owner.token, mixed(fresh.lines, [part]), randomUUID());
+        response(sale, 201);
+        eq(sale.body.cash_change_idr, "0", "tanpa kembalian");
+        const saved = await request(`/sales/${sale.body.sale_id}`, owner.token);
+        const [stored] = saved.body.payments as Record<string, unknown>[];
+        methods.push(`${stored.method}:${stored.reference ?? "-"}`);
+      }
+      eq(methods.join(","), "TRANSFER:TRF-1,QRIS:-,EDC:-", "metode dan referensi");
+      eq((await states(owner, p)).qty, 1, "tiga unit terjual");
+      return "proof_checked=false → 400; TRANSFER, QRIS, EDC masing-masing Rp15.000 → 3 penjualan, stok 4 → 1";
+    });
+
+    await test("ST-PAY-03", KIND, "Konfirmasi pembayaran campuran yang diulang tidak menggandakan uang", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 3);
+      const q = await quote(owner.token, p.line);
+      const body = mixed(q.lines, [external("EDC", "5000", "APPR 0041"), cashPart("10000", "0")]);
+      const key = randomUUID();
+      const results = await Promise.all(Array.from({ length: 5 }, () => request("/sales", owner.token, body, key)));
+      for (const result of results) response(result, 201);
+      eq(new Set(results.map((r) => r.body.sale_id)).size, 1, "satu penjualan");
+      eq(results.filter((r) => r.body.replayed === false).length, 1, "satu posting");
+      response(await request("/sales", owner.token, mixed(q.lines, [external("EDC", "15000", "APPR 0041")]), key),
+        409, "IDEMPOTENCY_PAYLOAD_MISMATCH");
+      const after = await states(owner, p);
+      eq(after.sales, 1, "satu Sale"); eq(after.payments, 2, "dua bagian sekali"); eq(after.qty, 2, "stok sekali");
+      const [sum] = await admin<{ total: string }>("select sum(net_received_idr)::text total from biz.payment where tenant_id=$1",
+        [owner.tenant]);
+      eq(sum.total, "15000", "uang tercatat sekali");
+      return "5 kiriman serentak EDC Rp5.000 + tunai Rp10.000 → 1 Sale, 2 bagian, total Rp15.000";
+    });
+
+    await test("PAY-INPUT-01", KIND, "Referensi dan field pembayaran asing ditolak di API dan database", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 2);
+      const q = await quote(owner.token, p.line);
+      for (const reference of [" TRF-1", "TRF\n1", "x".repeat(65), ""]) {
+        response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "15000", reference)]), randomUUID()),
+          400, "VALIDATION_ERROR");
+      }
+      const forged = [
+        { ...external("TRANSFER", "15000"), verification_status: "VERIFIED" },
+        { ...external("TRANSFER", "15000"), verified_by: randomUUID() },
+        { ...external("TRANSFER", "15000"), reference: " TRF" },
+        { ...external("TRANSFER", "15000"), proof_checked: "true" },
+        { ...cashPart("15000"), reference: "TUNAI" },
+      ];
+      for (const part of forged) {
+        eq(await errOf(asActor(owner.token, "select app.sale_create($1,$2::jsonb)", [randomUUID(), mixed(q.lines, [part])])),
+          "VALIDATION", "validasi DB");
+      }
+      eq(await errOf(asActor(owner.token, "select app.sale_create($1,$2::jsonb)",
+        [randomUUID(), mixed(q.lines, [cashPart("15000"), external("QRIS", "0")])])), "SALE_PAYMENT_MISMATCH", "QRIS nol");
+      eq(await errOf(asActor(owner.token, "select app.sale_create($1,$2::jsonb)",
+        [randomUUID(), mixed(q.lines, [cashPart("0"), external("QRIS", "15000")])])), "SALE_PAYMENT_MISMATCH", "tunai nol");
+      eq((await states(owner, p)).sales, 0, "tidak ada penjualan");
+      return "Spasi tepi, baris baru, >64 karakter, status/aktor palsu, dan bagian nol ditolak";
+    });
+
+    await test("PAY-BALANCE-01", "integrasi DB", "Database menolak bagian bayar tambahan atau Sale tanpa pembayaran", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 2);
+      const q = await quote(owner.token, p.line);
+      const sale = await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "15000")]), randomUUID());
+      response(sale, 201);
+      const [row] = await admin<{ user_id: string; location_id: string }>(`select s.actor_user_id user_id,s.location_id
+        from biz.sale s where s.tenant_id=$1 and s.id=$2`, [owner.tenant, sale.body.sale_id]);
+      // The session token stays set until commit, so the deferred guards see the real actor and tenant.
+      const insertExtra = admin(`with actor as (select pg_catalog.set_config('app.session_token',$4,true))
+        insert into biz.payment(tenant_id,sale_id,part_no,method,change_idr,net_received_idr,
+        verification_status,verified_by,verified_at) select $1,$2,2,'QRIS',0,5000,'VERIFIED',$3,now() from actor`,
+      [owner.tenant, sale.body.sale_id, row.user_id, owner.token]);
+      eq(await errOf(insertExtra), "SALE_PAYMENT_MISMATCH", "bagian tambahan ditolak saat commit");
+      const unpaid = admin(`with actor as (select pg_catalog.set_config('app.session_token',$5,true))
+        insert into biz.sale(tenant_id,location_id,document_seq,business_day,finalized_at,actor_user_id,
+        idempotency_key,total_idr) select $1,$2,99,app.tenant_today($1),now(),$3,$4,15000 from actor`,
+      [owner.tenant, row.location_id, row.user_id, randomUUID(), owner.token]);
+      eq(await errOf(unpaid), "SALE_PAYMENT_MISMATCH", "Sale tanpa pembayaran ditolak saat commit");
+      const [count] = await admin<{ n: number }>("select count(*)::int n from biz.payment where tenant_id=$1", [owner.tenant]);
+      eq(count.n, 1, "hanya satu bagian sah");
+      return "Insert langsung bagian QRIS Rp5.000 dan Sale Rp15.000 tanpa bayar → SALE_PAYMENT_MISMATCH";
     });
 
     await test("SALE-DEADLINE-01", KIND, "Batas konservatif menghentikan penjualan di transaksi database", async () => {

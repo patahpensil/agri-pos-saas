@@ -13,16 +13,27 @@ const line = z.object({
   batch_id: id,
   quantity: z.number().int().min(1).max(9_999_999),
 }).strict();
+// A bank, QRIS or EDC reference as printed on the proof. Optional; never trusted as proof by itself.
+const reference = z.string().min(1).max(64)
+  .refine((value) => value === value.trim() && !/\p{Cc}/u.test(value));
+const cashPart = z.object({
+  method: z.literal("CASH"),
+  tendered_idr: amount,
+  change_idr: amount,
+  net_received_idr: amount,
+}).strict();
+const externalPart = z.object({
+  method: z.enum(["TRANSFER", "QRIS", "EDC"]),
+  net_received_idr: amount,
+  reference: reference.nullable().optional(),
+  proof_checked: z.boolean(),
+}).strict();
 const quoteBody = z.object({ lines: z.array(line).min(1).max(50) }).strict();
 const saleBody = z.object({
   customer_id: z.null().optional(),
   lines: z.array(line.extend({ quote_version: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).max(50),
-  payments: z.tuple([z.object({
-    method: z.literal("CASH"),
-    tendered_idr: amount,
-    change_idr: amount,
-    net_received_idr: amount,
-  }).strict()]),
+  payments: z.array(z.discriminatedUnion("method", [cashPart, externalPart])).min(1).max(4)
+    .refine((parts) => parts.filter((part) => part.method === "CASH").length <= 1),
 }).strict();
 
 @Controller()

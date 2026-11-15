@@ -261,6 +261,37 @@ jobs:
           bash db/test/mutation.sh PRICE_REFERENCE PRICE-20 || rc=1
           exit "$rc"
 
+      - name: Validasi uji saldo pembayaran mandiri sebelum mutasi
+        id: payment-positive-control
+        working-directory: backend
+        env:
+          TEST_TARGET: direct
+          TEST_DB_NAME: ${{ env.DB }}
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          TEST_SUITES: price,sales
+          TEST_ONLY_IDS: PAY-BALANCE-01
+          TEST_RESULTS_DIR: results/isolated-pay-balance
+        run: node dist/test/run.js
+
+      - name: Uji mutasi saldo pembayaran
+        if: always() && steps.payment-positive-control.outcome == 'success'
+        env:
+          PGHOST: ${{ env.PGSOCK }}
+          PGUSER: postgres
+          TEST_RUNTIME_HOST: ${{ env.PGSOCK }}
+          TEST_RUNTIME_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_HOST: ${{ env.PGSOCK }}
+          TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
+          TEST_ADMIN_USER: postgres
+          RESULTS_DIR: ${{ github.workspace }}/backend/results
+        run: |
+          export PGPORT=$PGPORT_DIRECT
+          bash db/test/mutation.sh PAYMENT_BALANCE PAY-BALANCE-01
+
       - name: Gerbang hasil (semua ID wajib PASS di kedua target)
         if: always()
         run: python3 backend/test/ci_gate.py backend/results
