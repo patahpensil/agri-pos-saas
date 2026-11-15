@@ -6,8 +6,6 @@ import { isUuid, parseBody } from "../common/validation";
 import { DbService } from "../db/db.service";
 
 const id = z.string().refine(isUuid).transform((value) => value.toLowerCase());
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => new Date(value + "T00:00:00Z").toISOString().startsWith(value));
 const amount = z.string().regex(/^(0|[1-9][0-9]{0,18})$/);
 const line = z.object({
   product_id: id,
@@ -35,7 +33,7 @@ const payments = z.array(z.discriminatedUnion("method", [cashPart, externalPart]
   .refine((parts) => parts.filter((part) => part.method === "CASH").length <= 1);
 const saleBody = z.object({
   customer_id: id.nullable().optional(),
-  due_on: isoDate.nullable().optional(),
+  due_on: z.iso.date().nullable().optional(),
   lines: z.array(line.extend({ quote_version: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).max(50),
   payments,
 }).strict();

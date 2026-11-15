@@ -428,6 +428,59 @@ export async function salesTests() {
       return "Spasi tepi, baris baru, >64 karakter, status/aktor palsu, dan bagian nol ditolak";
     });
 
+    await test("PAY-REF-01", KIND, "Referensi nontunai hanya dipakai sekali per toko dan metode", async () => {
+      const owner = await registerOwnerSql(), a = await product(owner, 3), b = await product(owner, 1);
+      const quoteA = await quote(owner.token, a.line), quoteB = await quote(owner.token, b.line);
+      const reference = "TRF-SATU-BUKTI";
+      const firstBody = mixed(quoteA.lines, [external("TRANSFER", "15000", reference)]);
+      const secondBody = mixed(quoteB.lines, [external("TRANSFER", "15000", reference)]);
+      const results = await Promise.all([
+        request("/sales", owner.token, firstBody, randomUUID()),
+        request("/sales", owner.token, secondBody, randomUUID()),
+      ]);
+      eq(results.filter((r) => r.status === 201).length, 1, "satu checkout tercatat");
+      response(results.find((r) => r.status !== 201)!, 409, "PAYMENT_REFERENCE_DUPLICATE");
+      const afterSales = await states(owner, a);
+      eq(afterSales.sales, 1, "satu Sale");
+      eq(afterSales.payments, 1, "satu pembayaran");
+      eq(afterSales.qty + (await states(owner, b)).qty, 3, "hanya satu unit keluar");
+
+      const samePart = external("QRIS", "7500", "QRIS-SATU-BUKTI");
+      const beforeCredit = await quote(owner.token, a.line);
+      response(await request("/sales", owner.token, mixed(beforeCredit.lines, [samePart, samePart]), randomUUID()),
+        409, "PAYMENT_REFERENCE_DUPLICATE");
+      eq((await states(owner, a)).payments, 1, "gagal atomik jika referensi berulang dalam satu checkout");
+
+      const customer = await request("/customers", owner.token, { display_name: "Bu Ani" }, randomUUID());
+      response(customer, 201);
+      const credit = await request("/sales", owner.token, {
+        ...mixed(beforeCredit.lines, []), customer_id: customer.body.customer_id, due_on: "2099-01-01",
+      }, randomUUID());
+      response(credit, 201);
+      const payBody = { sale_id: credit.body.sale_id, expected_version: 1, payments: firstBody.payments };
+      const settleKey = randomUUID();
+      response(await request("/payments", owner.token, payBody, settleKey), 409, "PAYMENT_REFERENCE_DUPLICATE");
+      const open = await request(`/sales/${credit.body.sale_id}`, owner.token);
+      eq((open.body.receivable as Record<string, unknown>).outstanding_idr, "15000", "faktur tetap belum lunas");
+      const newBody = { ...payBody, payments: [external("QRIS", "15000", "QRIS-SATU-BUKTI")] };
+      const valid = await request("/payments", owner.token, newBody, settleKey);
+      response(valid, 201);
+      eq(valid.body.outstanding_idr, "0", "referensi yang rollback dapat dipakai");
+      const replay = await request("/payments", owner.token, newBody, settleKey);
+      response(replay, 201);
+      eq(replay.body.payment_id, valid.body.payment_id, "retry sah mengembalikan pembayaran yang sama");
+      const [sum] = await admin<{ received: string; settlements: number }>(`select
+        (select sum(net_received_idr)::text from biz.payment where tenant_id=$1) received,
+        (select count(*)::int from biz.receivable_payment where tenant_id=$1) settlements`, [owner.tenant]);
+      eq(sum.received, "30000", "satu transfer dan satu pelunasan QRIS");
+      eq(sum.settlements, 1, "satu pelunasan");
+
+      const another = await registerOwnerSql(), differentStore = await product(another, 1);
+      const outside = await quote(another.token, differentStore.line);
+      response(await request("/sales", another.token, mixed(outside.lines, firstBody.payments), randomUUID()), 201);
+      return "Checkout serentak: 1 dicatat dan 1 ditolak; pelunasan duplikat ditolak; retry, rollback, dan isolasi toko lulus.";
+    });
+
     await test("PAY-BALANCE-01", "integrasi DB", "Database menolak bagian bayar tambahan atau Sale tanpa pembayaran", async () => {
       const owner = await registerOwnerSql(), p = await product(owner, 2);
       const q = await quote(owner.token, p.line);
@@ -507,6 +560,24 @@ export async function salesTests() {
       response(sale, 201);
       eq(sale.body.credit_idr, "10000", "sisa jadi piutang");
       return "Rp15.000 dibayar Rp5.000: tanpa pelanggan 409, tanpa jatuh tempo 400, tanggal lalu 400; dengan pelanggan → piutang Rp10.000";
+    });
+
+    await test("PAY-DATE-01", KIND, "Tanggal jatuh tempo yang tidak sah selalu 400", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 1);
+      const customer = await request("/customers", owner.token, { display_name: "Bu Ani" }, randomUUID());
+      response(customer, 201);
+      const q = await quote(owner.token, p.line);
+      const credit = { ...mixed(q.lines, []), customer_id: customer.body.customer_id };
+      for (const due_on of ["2099-00-01", "2099-13-01", "2099-02-29", "2099-04-31", "2099-01-32"]) {
+        response(await request("/sales", owner.token, { ...credit, due_on }, randomUUID()), 400, "VALIDATION_ERROR");
+      }
+      const after = await states(owner, p);
+      eq(after.sales, 0, "tanggal salah tidak membuat Sale");
+      eq(after.qty, 1, "stok tetap");
+      const leap = await request("/sales", owner.token, { ...credit, due_on: "2096-02-29" }, randomUUID());
+      response(leap, 201);
+      eq(leap.body.due_on, "2096-02-29", "tahun kabisat sah");
+      return "5 tanggal tidak sah → 400 dan tidak mengurangi stok. Tanggal kabisat sah diterima.";
     });
 
     await test("ST-PAY-01", KIND, "Tempo Rp1.000.000 dibayar Rp400.000; pelunasan tidak menambah omzet atau mengurangi stok", async () => {

@@ -35,8 +35,8 @@ COMMON = (
     + [(i, API) for i in ("ST-POS-01", "SALE-PRICE-01", "ST-INV-01-POS", "ST-INV-07-POS",
                           "SALE-STOCK-01", "SALE-COST-01", "ST-DOC-02", "SALE-ACCESS-01", "SALE-ROLLBACK-01", "SALE-DEADLINE-01",
                           "ST-PAY-02", "PAY-METHOD-01", "ST-PAY-03", "PAY-INPUT-01",
-                          "CUST-01", "ST-PAY-04", "ST-PAY-01", "RECV-CONC-01")]
-    + [("PAY-BALANCE-01", DB), ("RECV-BALANCE-01", DB)]
+                          "CUST-01", "ST-PAY-04", "ST-PAY-01", "RECV-CONC-01", "PAY-REF-01", "PAY-DATE-01")]
+    + [("PAY-BALANCE-01", DB), ("RECV-BALANCE-01", DB), ("MIG-INV-01", DB)]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]
