@@ -108,6 +108,14 @@ Pembayaran campuran (maksimal 4 bagian, paling banyak 1 bagian tunai) untuk tagi
 
 `method` nontunai: `TRANSFER`, `QRIS`, `EDC`. `proof_checked` wajib `true` (petugas sudah melihat uang masuk di rekening/QRIS/EDC); `false` ditolak 400 `PAYMENT_PROOF_REQUIRED`. `reference` opsional (1–64 karakter, tanpa spasi tepi/karakter kontrol). Jumlah `net_received_idr` semua bagian wajib sama dengan total server, kalau tidak 409 `SALE_PAYMENT_MISMATCH`; `tendered_idr − change_idr ≠ net_received_idr` pada bagian tunai menjadi 409 `SALE_CASH_MISMATCH`. Kembalian hanya ada pada bagian tunai. `GET /sales/{id}` mengembalikan `payments[]` berisi metode, nominal, referensi, `verification_status`, `verified_by`, `verified_at`.
 
+Bayar sebagian atau tempo: `payments` boleh kurang dari total (termasuk `[]`) hanya bila `customer_id` pelanggan terdaftar dan `due_on` (YYYY-MM-DD, tidak sebelum hari operasional toko) diisi. Tanpa pelanggan → 409 `CREDIT_CUSTOMER_REQUIRED`; tanpa jatuh tempo → 400 `CREDIT_DUE_DATE_REQUIRED`; tanggal lampau → 400 `CREDIT_DUE_DATE_INVALID`. Respons berisi `credit_idr` dan `due_on`.
+
+### 3.1a Pelanggan dan pelunasan piutang
+
+- `POST /customers` (Idempotency-Key): `{"display_name":"Pak Budi","phone":"0812-3456-7781","address":"Desa Sukamaju"}`; `phone`/`address` opsional. Nomor disimpan E.164 dan selalu dikirim tersamar (`phone_masked`). Nomor kembar di toko yang sama → 409 `CUSTOMER_PHONE_DUPLICATE`. `GET /customers?search=` (maks 50) dan `GET /customers/{id}`.
+- `POST /payments` (Idempotency-Key): `{"sale_id":"UUID","expected_version":1,"payments":[...]}` memakai bentuk bagian bayar yang sama dengan checkout. Menambah uang pada faktur itu saja: tidak membuat Sale, omzet, atau mutasi stok. Versi faktur basi → 409 `VERSION_CONFLICT`; melebihi sisa → 409 `RECEIVABLE_OVERPAID`; sudah lunas → 409 `RECEIVABLE_SETTLED`. Respons: `payment_id`, `receipt_number` (urutan bukti bayar per toko), `paid_idr`, `outstanding_idr`, `cash_change_idr`, `invoice_version`.
+- `GET /receivables?customer_id=`: faktur dengan sisa > 0, urut jatuh tempo; `due_status` = `NOT_DUE` / `DUE_TODAY` / `OVERDUE`; nomor HP tersamar.
+
 *Angka hanya contoh payload; server menghitung harga dari master dan PPN yang sah. `quote_version` tidak menjamin harga terkunci. Respons 201 hanya setelah commit, berisi `sale_id`, `receipt_number`, `grand_total_idr`, `cash_change_idr`, `version`; 409 untuk harga/stok/batch/entitlement konflik; 402 **tidak** digunakan untuk memalsukan status subscription.*
 
 ### 3.2 POST `/api/v1/refunds/approvals/{id}/attempts`

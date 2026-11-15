@@ -41,6 +41,12 @@ const DB_CODES: Record<string, [number, string]> = {
   SALE_BATCH_EXPIRED: [409, "Batch kedaluwarsa dan tidak bisa dijual"],
   SALE_CASH_MISMATCH: [409, "Uang tunai dikurangi kembalian harus sama dengan bagian tunai"],
   SALE_PAYMENT_MISMATCH: [409, "Jumlah semua pembayaran harus sama dengan total tagihan"],
+  CREDIT_CUSTOMER_REQUIRED: [409, "Bayar sebagian atau tempo wajib memilih pelanggan terdaftar"],
+  CREDIT_DUE_DATE_REQUIRED: [400, "Tanggal jatuh tempo wajib diisi untuk bayar sebagian atau tempo"],
+  CREDIT_DUE_DATE_INVALID: [400, "Tanggal jatuh tempo tidak boleh sebelum hari ini"],
+  CUSTOMER_PHONE_DUPLICATE: [409, "Nomor HP ini sudah dipakai pelanggan lain di toko ini"],
+  RECEIVABLE_SETTLED: [409, "Faktur ini sudah lunas"],
+  RECEIVABLE_OVERPAID: [409, "Pembayaran melebihi sisa piutang faktur ini"],
   PAYMENT_PROOF_REQUIRED: [400, "Periksa dulu uang masuk di rekening, QRIS, atau mesin EDC sebelum menyimpan"],
   SALE_TOTAL_LIMIT: [400, "Total penjualan melebihi kapasitas pencatatan rupiah"],
   // Inventori

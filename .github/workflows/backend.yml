@@ -261,7 +261,7 @@ jobs:
           bash db/test/mutation.sh PRICE_REFERENCE PRICE-20 || rc=1
           exit "$rc"
 
-      - name: Validasi uji saldo pembayaran mandiri sebelum mutasi
+      - name: Validasi uji saldo pembayaran dan piutang mandiri sebelum mutasi
         id: payment-positive-control
         working-directory: backend
         env:
@@ -273,11 +273,11 @@ jobs:
           TEST_ADMIN_PORT: ${{ env.PGPORT_DIRECT }}
           TEST_ADMIN_USER: postgres
           TEST_SUITES: price,sales
-          TEST_ONLY_IDS: PAY-BALANCE-01
+          TEST_ONLY_IDS: PAY-BALANCE-01,RECV-BALANCE-01
           TEST_RESULTS_DIR: results/isolated-pay-balance
         run: node dist/test/run.js
 
-      - name: Uji mutasi saldo pembayaran
+      - name: Uji mutasi saldo pembayaran dan piutang
         if: always() && steps.payment-positive-control.outcome == 'success'
         env:
           PGHOST: ${{ env.PGSOCK }}
@@ -290,7 +290,10 @@ jobs:
           RESULTS_DIR: ${{ github.workspace }}/backend/results
         run: |
           export PGPORT=$PGPORT_DIRECT
-          bash db/test/mutation.sh PAYMENT_BALANCE PAY-BALANCE-01
+          rc=0
+          bash db/test/mutation.sh PAYMENT_BALANCE PAY-BALANCE-01 || rc=1
+          bash db/test/mutation.sh RECEIVABLE_BALANCE RECV-BALANCE-01 || rc=1
+          exit "$rc"
 
       - name: Gerbang hasil (semua ID wajib PASS di kedua target)
         if: always()
