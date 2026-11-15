@@ -21,6 +21,7 @@ import { InventoryController } from "./inventory/inventory.controller";
 import { ReauthController } from "./auth/reauth.controller";
 import { PricingController } from "./pricing/pricing.controller";
 import { SalesController } from "./sales/sales.controller";
+import { CustomerController } from "./customer/customer.controller";
 
 export interface CreatedApp {
   app: INestApplication;
@@ -62,7 +63,7 @@ export async function createApp(cfg: AppConfig, opts: { otpSender?: OtpSender } 
   // SAD §3.1: penjualan nyata menunggu bukti T-06c. Endpoint checkout tersedia di lingkungan uji.
   const checkoutControllers = cfg.mode === "production" ? [] : [SalesController];
   @Module({
-    controllers: [AuthController, TenantController, StaffController, HealthController, CatalogController, InventoryController, ReauthController, PricingController, ...checkoutControllers],
+    controllers: [AuthController, TenantController, StaffController, HealthController, CatalogController, InventoryController, ReauthController, PricingController, CustomerController, ...checkoutControllers],
     providers: [
       { provide: CONFIG, useValue: cfg },
       { provide: DbService, useValue: dbs },

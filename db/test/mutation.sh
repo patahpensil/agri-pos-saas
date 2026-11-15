@@ -38,7 +38,7 @@ fi
 if [[ ",$ids," == *"PRICE-"* ]]; then
   suites="$suites,price"
 fi
-if [[ ",$ids," == *"PAY-"* || ",$ids," == *"SALE-"* ]]; then
+if [[ ",$ids," == *"PAY-"* || ",$ids," == *"SALE-"* || ",$ids," == *"RECV-"* ]]; then
   suites="$suites,price,sales"
 fi
 set +e

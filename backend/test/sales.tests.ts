@@ -300,7 +300,7 @@ export async function salesTests() {
       await admin("delete from biz.cost_pool where tenant_id=$1 and product_id=$2 and status='SALEABLE'", [owner.tenant, b.line.product_id]);
       const q = await quote(owner.token, a.line, b.line);
       const key = randomUUID(), body = cash(q.lines, "30000");
-      response(await request("/sales", owner.token, cash(q.lines, "29000"), randomUUID()), 409, "SALE_PAYMENT_MISMATCH");
+      response(await request("/sales", owner.token, cash(q.lines, "29000"), randomUUID()), 409, "CREDIT_CUSTOMER_REQUIRED");
       response(await request("/sales", owner.token, body, key), 409, "INVENTORY_INCONSISTENT");
       const one = await states(owner, a), two = await states(owner, b);
       ok(one.qty === 2 && two.qty === 2 && one.sales + one.payments + one.ledger + one.audit + two.ledger === 0,
@@ -324,7 +324,7 @@ export async function salesTests() {
       response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "40000")]), randomUUID()),
         409, "SALE_PAYMENT_MISMATCH");
       response(await request("/sales", owner.token, mixed(q.lines, [external("TRANSFER", "10000")]), randomUUID()),
-        409, "SALE_PAYMENT_MISMATCH");
+        409, "CREDIT_CUSTOMER_REQUIRED");
       response(await request("/sales", owner.token, mixed(q.lines, [cashPart("15000"), cashPart("15000")]), randomUUID()),
         400, "VALIDATION_ERROR");
       response(await request("/sales", owner.token, mixed(q.lines, [{ ...external("TRANSFER", "30000"), change_idr: "0" }]),
@@ -449,6 +449,165 @@ export async function salesTests() {
       const [count] = await admin<{ n: number }>("select count(*)::int n from biz.payment where tenant_id=$1", [owner.tenant]);
       eq(count.n, 1, "hanya satu bagian sah");
       return "Insert langsung bagian QRIS Rp5.000 dan Sale Rp15.000 tanpa bayar → SALE_PAYMENT_MISMATCH";
+    });
+
+    await test("CUST-01", KIND, "Pelanggan terdaftar per toko dengan nomor HP tersamar", async () => {
+      const owner = await registerOwnerSql(), other = await registerOwnerSql();
+      const key = randomUUID();
+      const body = { display_name: "Pak Budi", phone: "0812-3456-7781", address: "Desa Sukamaju RT 02" };
+      const first = await request("/customers", owner.token, body, key);
+      response(first, 201);
+      eq(first.body.phone_masked, "+62812****7781", "nomor tersamar");
+      ok(!JSON.stringify(first.body).includes("81234567781"), "nomor utuh tidak dikirim");
+      const again = await request("/customers", owner.token, body, key);
+      response(again, 201);
+      eq(again.body.customer_id, first.body.customer_id, "kunci sama → pelanggan sama"); eq(again.body.replayed, true, "replay");
+      response(await request("/customers", owner.token, { display_name: "Budi kedua", phone: "+6281234567781" }, randomUUID()),
+        409, "CUSTOMER_PHONE_DUPLICATE");
+      response(await request("/customers", other.token, { display_name: "Pak Budi", phone: "081234567781" }, randomUUID()), 201);
+      for (const bad of [{ display_name: "" }, { display_name: "Budi\u0007" }, { display_name: "Budi", phone: "12345" },
+        { display_name: "Budi", nik: "3201" }]) {
+        response(await request("/customers", owner.token, bad, randomUUID()), 400, "VALIDATION_ERROR");
+      }
+      eq(await errOf(asActor(owner.token, "select app.customer_create($1,$2::jsonb)",
+        [randomUUID(), { display_name: " Budi" }])), "VALIDATION", "validasi DB");
+      response(await request("/customers", owner.token, { display_name: "Bu Sari" }, randomUUID()), 201);
+      const list = await request("/customers?search=budi", owner.token);
+      response(list, 200);
+      const names = (list.body as unknown as { display_name: string }[]).map((c) => c.display_name);
+      eq(names.join(","), "Pak Budi", "pencarian nama");
+      response(await request(`/customers/${first.body.customer_id}`, other.token), 404, "NOT_FOUND");
+      const p = await product(other, 1);
+      const q = await quote(other.token, p.line);
+      response(await request("/sales", other.token, { ...cash(q.lines, "0"), payments: [], customer_id: first.body.customer_id,
+        due_on: "2099-01-01" }, randomUUID()), 404, "NOT_FOUND");
+      return "Pak Budi tersimpan +62812****7781; nomor kembar 409; toko lain tidak bisa memakai pelanggan ini";
+    });
+
+    await test("ST-PAY-04", KIND, "Bayar sebagian tanpa pelanggan terdaftar ditolak", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 3);
+      const customer = await request("/customers", owner.token, { display_name: "Bu Sari" }, randomUUID());
+      response(customer, 201);
+      const q = await quote(owner.token, p.line);
+      const partial = mixed(q.lines, [cashPart("5000")]);
+      response(await request("/sales", owner.token, partial, randomUUID()), 409, "CREDIT_CUSTOMER_REQUIRED");
+      response(await request("/sales", owner.token, { ...partial, payments: [] }, randomUUID()), 409, "CREDIT_CUSTOMER_REQUIRED");
+      const withCustomer = { ...partial, customer_id: customer.body.customer_id };
+      response(await request("/sales", owner.token, withCustomer, randomUUID()), 400, "CREDIT_DUE_DATE_REQUIRED");
+      response(await request("/sales", owner.token, { ...withCustomer, due_on: "2020-01-01" }, randomUUID()),
+        400, "CREDIT_DUE_DATE_INVALID");
+      response(await request("/sales", owner.token, { ...withCustomer, due_on: "2026-02-30" }, randomUUID()), 400, "VALIDATION_ERROR");
+      response(await request("/sales", owner.token, { ...cash(q.lines, "15000"), due_on: "2099-01-01" }, randomUUID()),
+        409, "SALE_PAYMENT_MISMATCH");
+      const before = await states(owner, p);
+      eq(before.sales + before.payments + before.ledger, 0, "penolakan tanpa efek");
+      eq(before.qty, 3, "stok tetap");
+      const [today] = await admin<{ d: string }>("select app.tenant_today($1)::text d", [owner.tenant]);
+      const sale = await request("/sales", owner.token, { ...withCustomer, due_on: today.d }, randomUUID());
+      response(sale, 201);
+      eq(sale.body.credit_idr, "10000", "sisa jadi piutang");
+      return "Rp15.000 dibayar Rp5.000: tanpa pelanggan 409, tanpa jatuh tempo 400, tanggal lalu 400; dengan pelanggan → piutang Rp10.000";
+    });
+
+    await test("ST-PAY-01", KIND, "Tempo Rp1.000.000 dibayar Rp400.000; pelunasan tidak menambah omzet atau mengurangi stok", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 5, { price: 250_000, cost: 500_000 });
+      const customer = await request("/customers", owner.token, { display_name: "Pak Budi", phone: "081299990001" }, randomUUID());
+      response(customer, 201);
+      const q = await quote(owner.token, { ...p.line, quantity: 4 });
+      eq(q.grand_total_idr, "1000000", "4 × Rp250.000");
+      const sale = await request("/sales", owner.token, { ...mixed(q.lines, [cashPart("400000")]),
+        customer_id: customer.body.customer_id, due_on: "2099-01-31" }, randomUUID());
+      response(sale, 201);
+      eq(sale.body.credit_idr, "600000", "piutang awal");
+      const saleId = String(sale.body.sale_id);
+      const open = await request(`/receivables?customer_id=${customer.body.customer_id}`, owner.token);
+      response(open, 200);
+      const [row] = open.body as unknown as Record<string, unknown>[];
+      eq(row.outstanding_idr, "600000", "piutang Rp600.000"); eq(row.due_status, "NOT_DUE", "belum jatuh tempo");
+      eq(row.phone_masked, "+62812****0001", "nomor tersamar");
+      const stockAfterSale = await states(owner, p);
+
+      const firstKey = randomUUID();
+      const firstBody = { sale_id: saleId, expected_version: 1, payments: [external("QRIS", "200000", "RRN 5512")] };
+      const first = await request("/payments", owner.token, firstBody, firstKey);
+      response(first, 201);
+      eq(first.body.outstanding_idr, "400000", "sisa Rp400.000"); eq(first.body.receipt_number, "1", "nomor bukti bayar");
+      const replay = await request("/payments", owner.token, firstBody, firstKey);
+      response(replay, 201); eq(replay.body.replayed, true, "pengulangan tidak dicatat dua kali");
+      response(await request("/payments", owner.token, firstBody, randomUUID()), 409, "VERSION_CONFLICT");
+      response(await request("/payments", owner.token, { sale_id: saleId, expected_version: 2, payments: [cashPart("500000")] },
+        randomUUID()), 409, "RECEIVABLE_OVERPAID");
+      response(await request("/payments", owner.token, { sale_id: saleId, expected_version: 2,
+        payments: [{ ...external("TRANSFER", "400000"), proof_checked: false }] }, randomUUID()), 400, "PAYMENT_PROOF_REQUIRED");
+      const last = await request("/payments", owner.token, { sale_id: saleId, expected_version: 2,
+        payments: [cashPart("400000", "100000")] }, randomUUID());
+      response(last, 201);
+      eq(last.body.outstanding_idr, "0", "lunas"); eq(last.body.cash_change_idr, "100000", "kembalian Rp100.000");
+      response(await request("/payments", owner.token, { sale_id: saleId, expected_version: 3, payments: [cashPart("1")] },
+        randomUUID()), 409, "RECEIVABLE_SETTLED");
+
+      const after = await states(owner, p);
+      eq(after.qty, stockAfterSale.qty, "stok tidak berubah oleh pelunasan"); eq(after.qty, 1, "5 − 4");
+      eq(after.ledger, 1, "satu mutasi jual"); eq(after.sales, 1, "tidak ada Sale baru");
+      const [money] = await admin<{ total: string; omzet: string }>(`select
+        (select sum(net_received_idr)::text from biz.payment where tenant_id=$1) total,
+        (select sum(total_idr)::text from biz.sale where tenant_id=$1) omzet`, [owner.tenant]);
+      eq(money.total, "1000000", "uang diterima Rp1.000.000 sekali"); eq(money.omzet, "1000000", "omzet tetap Rp1.000.000");
+      const saved = await request(`/sales/${saleId}`, owner.token);
+      response(saved, 200);
+      const receivable = saved.body.receivable as Record<string, unknown>;
+      eq(receivable.outstanding_idr, "0", "faktur lunas"); eq(receivable.paid_idr, "1000000", "dibayar");
+      eq((receivable.settlements as unknown[]).length, 2, "dua pelunasan");
+      eq((saved.body.payments as unknown[]).length, 1, "pembayaran checkout tetap satu");
+      const empty = await request("/receivables", owner.token);
+      eq((empty.body as unknown as unknown[]).length, 0, "tidak ada piutang terbuka");
+      return "Piutang Rp600.000 → QRIS Rp200.000 → tunai Rp400.000 (kembali Rp100.000) → lunas; omzet Rp1 juta, stok 1";
+    });
+
+    await test("RECV-CONC-01", KIND, "Dua kasir melunasi faktur yang sama serentak: hanya satu tercatat", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 2);
+      await makePro(owner.tenant);
+      const operator = await inviteAndActivateAdminSql(owner);
+      const customer = await request("/customers", owner.token, { display_name: "Pak Dedi" }, randomUUID());
+      const q = await quote(owner.token, p.line);
+      const sale = await request("/sales", owner.token, { ...mixed(q.lines, []), customer_id: customer.body.customer_id,
+        due_on: "2099-01-01" }, randomUUID());
+      response(sale, 201);
+      eq(sale.body.credit_idr, "15000", "tempo penuh");
+      const body = { sale_id: sale.body.sale_id, expected_version: 1, payments: [cashPart("15000")] };
+      const results = await Promise.all([owner.token, operator.token].map((token) => request("/payments", token, body, randomUUID())));
+      eq(results.filter((r) => r.status === 201).length, 1, "satu berhasil");
+      response(results.find((r) => r.status !== 201)!, 409, "VERSION_CONFLICT");
+      const [money] = await admin<{ n: number; total: string }>(`select count(*)::int n, sum(net_received_idr)::text total
+        from biz.payment where tenant_id=$1`, [owner.tenant]);
+      eq(money.n, 1, "satu bagian bayar"); eq(money.total, "15000", "uang sekali");
+      await admin(`update platform.subscription set activated_at=now()-interval '31 days', expires_at=now()-interval '1 minute'
+        where tenant_id=$1`, [owner.tenant]);
+      const sale2 = await admin<{ id: string }>("select sale_id id from biz.invoice_state where tenant_id=$1", [owner.tenant]);
+      response(await request("/payments", owner.token, { sale_id: sale2[0].id, expected_version: 2, payments: [cashPart("1")] },
+        randomUUID()), 403, "TENANT_LOCKED");
+      return "Owner dan Admin bayar Rp15.000 bersamaan → 1 tercatat, 1 VERSION_CONFLICT; paket habis → 403";
+    });
+
+    await test("RECV-BALANCE-01", "integrasi DB", "Database menolak pelunasan yang tidak tercatat di faktur", async () => {
+      const owner = await registerOwnerSql(), p = await product(owner, 1);
+      const customer = await request("/customers", owner.token, { display_name: "Bu Ani" }, randomUUID());
+      const q = await quote(owner.token, p.line);
+      const sale = await request("/sales", owner.token, { ...mixed(q.lines, []), customer_id: customer.body.customer_id,
+        due_on: "2099-01-01" }, randomUUID());
+      response(sale, 201);
+      const [row] = await admin<{ user_id: string }>("select actor_user_id user_id from biz.sale where tenant_id=$1", [owner.tenant]);
+      // Header and part agree, but the invoice projection is not updated: 50.000 more than the invoice allows.
+      const bypass = admin(`with actor as (select pg_catalog.set_config('app.session_token',$4,true)),
+        header as (insert into biz.receivable_payment(tenant_id,sale_id,document_seq,business_day,paid_at,actor_user_id,
+          idempotency_key,amount_idr) select $1,$2,1,app.tenant_today($1),now(),$3,$5,65000 from actor returning id)
+        insert into biz.payment(tenant_id,sale_id,settlement_id,part_no,method,change_idr,net_received_idr,
+          verification_status,verified_by,verified_at) select $1,$2,header.id,1,'TRANSFER',0,65000,'VERIFIED',$3,now() from header`,
+      [owner.tenant, sale.body.sale_id, row.user_id, owner.token, randomUUID()]);
+      eq(await errOf(bypass), "SALE_PAYMENT_MISMATCH", "pelunasan di luar fungsi ditolak saat commit");
+      const [count] = await admin<{ n: number }>("select count(*)::int n from biz.receivable_payment where tenant_id=$1", [owner.tenant]);
+      eq(count.n, 0, "tidak ada pelunasan");
+      return "Insert langsung pelunasan Rp65.000 untuk piutang Rp15.000 → SALE_PAYMENT_MISMATCH";
     });
 
     await test("SALE-DEADLINE-01", KIND, "Batas konservatif menghentikan penjualan di transaksi database", async () => {
