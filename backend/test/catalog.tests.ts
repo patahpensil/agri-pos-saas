@@ -6,7 +6,7 @@ import { AppConfig } from "../src/config/config";
 import { Client } from "pg";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, asActor, asRole, eq, errOf, inviteAndActivateAdminSql,
-  harnessSender, makePro, notRun, ok, registerOwnerSql, test,
+  harnessSender, makePro, ok, registerOwnerSql, test,
 } from "./harness";
 
 const KA = "API";
@@ -459,7 +459,6 @@ export async function catalogTests(): Promise<void> {
       ok(r.status === 201 && p.status === 200 && (p.body.stockBase as Record<string, number>).SALEABLE === 0, p.text);
       return "201; stockBase SALEABLE = 0";
     });
-    notRun("ST-INV-01-POS", KA, "POS menolak jual sebelum stok masuk", "Checkout POS belum dibangun (di luar cakupan PR ini)");
 
     await test("INV-03-EXP", KA, "Batch kedaluwarsa tidak bisa dicatat sebagai stok siap jual (validasi server)", async () => {
       const r = await post(A.token, pesticide(sku("EXP"), { opening: [{ packageKey: "botol", qty: 2, batch: { number: "OLD", expiresOn: "2020-01-01" }, cost: { basis: "KNOWN", totalIdr: 200 } }] }));

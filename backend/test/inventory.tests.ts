@@ -7,7 +7,7 @@ import { AppConfig } from "../src/config/config";
 import { Client } from "pg";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY, admin, asActor, asRole, eq, errOf, inviteAndActivateAdminSql,
-  PW, harnessSender, makePro, notRun, ok, registerOwnerSql, sleep, test,
+  PW, harnessSender, makePro, ok, registerOwnerSql, sleep, test,
 } from "./harness";
 
 const KA = "API";
@@ -371,7 +371,6 @@ export async function inventoryTests(): Promise<void> {
       eq(hh.rb, ow.u, "dilepas oleh Owner");
       return "tahan Admin: siap jual 41->0; terima ke siap jual 409 HOLD_ACTIVE; Admin lepas 403 (API & DB); Owner lepas -> 41 kembali; lepas ulang 409";
     });
-    notRun("ST-INV-07-POS", KA, "Batch ditahan: penjualan POS langsung diblokir", "Checkout POS belum dibangun; sisi inventori (siap jual 0 & terkunci) diuji di ST-INV-07-INV");
 
     await test("INV-HOLD-02", KA, "Pelepasan tidak membuka stok yang kedaluwarsa atau masih dicakup penahanan lain (dilaporkan, tidak dibuang diam-diam)", async () => {
       const p = await pesticide(A.token);
