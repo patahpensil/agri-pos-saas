@@ -6,7 +6,7 @@ import { dispatchOtps, OtpSender, TestOtpSender } from "../src/auth/otp-sender";
 import { setLogSink } from "../src/common/log";
 import {
   ADMIN_HOST, ADMIN_PORT, ADMIN_USER, DBNAME, PW, RUNTIME_HOST, RUNTIME_PORT, TEST_OTP_MAC_KEY,
-  admin, asActor, asRole, claimCode, eq, errOf, inviteAndActivateAdminSql, mac, makePro, newDevice, newPhone, ok,
+  admin, asActor, asRole, claimCode, containsSecret, eq, errOf, inviteAndActivateAdminSql, mac, makePro, newDevice, newPhone, ok,
   regVerify, registerOwnerSql, rolePool, sleep, test, waitFor,
 } from "./harness";
 
@@ -173,7 +173,7 @@ export async function audDbTests(): Promise<void> {
       const [of] = await outboxOf(pf);
       ok(of.status === "FAILED" && of.send_attempts === 3, `batas percobaan: ${JSON.stringify(of)}`);
       // f) log kegagalan tidak memuat kode
-      const leaked = fail.seen.filter((c) => logs.some((l) => l.includes(c)));
+      const leaked = fail.seen.filter((c) => logs.some((l) => containsSecret(l, c)));
       eq(leaked.length, 0, "kode muncul di log");
       ok(logs.some((l) => l.includes("otp_send_failed")), "kegagalan tidak tercatat");
       return `gagal->QUEUED->SENT (1 kiriman); 0 tumpang tindih 2 worker; kedaluwarsa->EXPIRED; pulih setelah lease 2 dtk; maks 3 percobaan->FAILED; ${fail.seen.length} kode gagal tidak ada di log`;
@@ -363,7 +363,7 @@ export async function audDbTests(): Promise<void> {
     eq(good.count(p), 0, "dikirim setelah FAILED");
     const ev = await admin<{ kind: string; d: string }>("select kind, detail::text d from iam.auth_event where detail->>'job' = $1 order by at", [j3.id]);
     ok(ev.map((e) => e.kind).join(",") === "OTP_DISPATCH_FAILED,OTP_DISPATCH_FAILED,OTP_DISPATCH_GAVE_UP", `audit: ${ev.map((e) => e.kind).join(",")}`);
-    const leak = ev.filter((e) => e.d.includes(p) || fail.seen.some((c) => e.d.includes(c)));
+    const leak = ev.filter((e) => e.d.includes(p) || fail.seen.some((c) => containsSecret(e.d, c)));
     eq(leak.length, 0, "nomor/kode di audit");
     // Challenge kedaluwarsa tidak dikirim walau pekerjaan sudah jatuh tempo.
     const pe = newPhone();

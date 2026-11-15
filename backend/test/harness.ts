@@ -118,6 +118,13 @@ export async function errOf(p: Promise<unknown>): Promise<string> {
   }
 }
 
+// A numeric secret (OTP) counts only as a standalone number, the same unit the logger redacts.
+// A plain substring search reports false leaks when the digits happen to occur inside a UUID.
+export function containsSecret(text: string, secret: string): boolean {
+  if (!/^[0-9]+$/.test(secret)) return text.includes(secret);
+  return new RegExp(`(?<![0-9A-Za-z])${secret}(?![0-9A-Za-z])`).test(text);
+}
+
 export async function closeAll(): Promise<void> {
   await adminPool.end();
   for (const p of pools.values()) await p.end();
