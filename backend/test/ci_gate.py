@@ -32,6 +32,8 @@ COMMON = (
     # ENT-02 — batas satu lokasi per FREE/PRO, termasuk percobaan serentak (direct + PgBouncer).
     + [("ENT-LOC-01", DB)]
     + [(f"PRICE-{i:02d}", API) for i in range(1,24)] # harga eceran, keputusan Owner dan integritas
+    + [(i, API) for i in ("ST-POS-01", "SALE-PRICE-01", "ST-INV-01-POS", "ST-INV-07-POS",
+                          "SALE-STOCK-01", "SALE-COST-01", "ST-DOC-02", "SALE-ACCESS-01", "SALE-ROLLBACK-01", "SALE-DEADLINE-01")]
     # Modul produk & stok awal
     + [(f"CAT-{i:02d}", API) for i in (1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 15, 16, 17, 18)]
     + [(f"CAT-{i:02d}", DB) for i in (7, 11, 12, 14)]

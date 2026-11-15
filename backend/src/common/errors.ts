@@ -36,6 +36,11 @@ const DB_CODES: Record<string, [number, string]> = {
   SUBSIDY_PRICE_SEPARATE: [409, "Harga pupuk subsidi wajib melalui ketentuan HET"],
   PRICE_ALREADY_REVIEWED: [409, "Pengajuan harga sudah diputuskan"],
   PRICE_REFERENCE_REQUIRED: [400, "Dokumen rujukan wajib untuk menyetujui harga"],
+  SALE_QUOTE_CHANGED: [409, "Harga atau stok berubah. Muat ulang dan konfirmasi kembali."],
+  SALE_PRICE_MISSING: [409, "Kemasan belum mempunyai harga eceran yang disetujui"],
+  SALE_BATCH_EXPIRED: [409, "Batch kedaluwarsa dan tidak bisa dijual"],
+  SALE_CASH_MISMATCH: [409, "Uang tunai dan kembalian harus sesuai dengan total tagihan"],
+  SALE_TOTAL_LIMIT: [400, "Total penjualan melebihi kapasitas pencatatan rupiah"],
   // Inventori
   PACKAGE_INVALID: [400, "Varian kemasan tidak sah untuk produk ini"],
   BATCH_INVALID: [400, "Batch tidak sah untuk produk ini"],
