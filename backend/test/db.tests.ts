@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
+import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "pg";
@@ -23,7 +24,7 @@ const TABLES = [
   "biz.stock_receipt", "biz.stock_hold", "biz.stock_hold_line", "iam.reauth_grant",
   "biz.stock_count", "biz.stock_count_line",
   "biz.price_change_request", "biz.price_rule_version",
-  "biz.sale", "biz.sale_line", "biz.payment", "biz.customer", "biz.receivable_payment", "biz.invoice_state",
+  "biz.sale", "biz.sale_line", "biz.payment", "biz.customer", "biz.receivable_payment", "biz.invoice_state", "biz.payment_reference",
 ];
 
 // Daftar EXECUTE yang diizinkan per role runtime. Fungsi lain (termasuk iam.issue_session) harus tertutup.
@@ -208,6 +209,78 @@ export async function dbTests(): Promise<void> {
     const valid = readdirSync(dir).filter((f) => f.endsWith(".sql") && f !== "0099_broken.sql").length;
     eq(applied, valid, "migrasi tercatat sebelum file rusak");
     return `exit=${run.status}; ${valid} migrasi sah tercatat, 0099 ditolak`;
+  });
+
+  await test("MIG-INV-01", K, "Upgrade mengisi faktur lama dan mempertahankan histori pembayaran", async () => {
+    const db = "invoice_upgrade_" + randomUUID().replaceAll("-", "");
+    const oldMigrations = mkdtempSync(join(tmpdir(), "invoice-upgrade-"));
+    const migrations = resolve(__dirname, "../../../db/migrations");
+    const token = randomBytes(32).toString("hex");
+    const client = new Client({ host: ADMIN_HOST, port: ADMIN_PORT, user: ADMIN_USER, database: db });
+    cpSync(migrations, oldMigrations, { recursive: true, filter: (path) => !path.includes("/0016_") && !path.includes("/0017_") });
+    function migrate(dir: string) {
+      const run = spawnSync("bash", [resolve(migrations, "../migrate.sh")], {
+        env: { ...process.env, PGHOST: ADMIN_HOST, PGPORT: String(ADMIN_PORT), PGUSER: ADMIN_USER, PGDATABASE: db, MIGRATIONS_DIR: dir },
+        encoding: "utf8",
+      });
+      eq(run.status, 0, "migrasi: " + run.stderr);
+      return run.stderr;
+    }
+    await admin(`create database ${db}`);
+    try {
+      migrate(oldMigrations);
+      await client.connect();
+      const { rows: [actor] } = await client.query<{ tenant: string; location: string; owner: string }>(`
+        with tenant as (insert into platform.tenant(business_name,timezone)
+          values ('Kios migrasi','Asia/Makassar') returning id),
+        location as (insert into platform.location(tenant_id,name) select id,'Kios' from tenant returning id),
+        subscription as (insert into platform.subscription(tenant_id,plan,activated_at,expires_at,grace_deadline)
+          select id,'PRO',now(),now()+interval '30 days',now()+interval '37 days' from tenant),
+        account as (insert into iam.user_account(phone_e164,password_hash) values ($1,'fixture') returning id),
+        member as (insert into iam.membership(tenant_id,user_id,role,state,display_name)
+          select tenant.id,account.id,'OWNER','ACTIVE','Owner' from tenant cross join account returning id,tenant_id,user_id),
+        session as (insert into iam.session(tenant_id,token_hash,user_id,membership_id,device_id,auth_at,expires_at)
+          select tenant_id,sha256(convert_to($2,'UTF8')),user_id,id,'migration-fixture',now(),now()+interval '1 day'
+          from member)
+        select tenant.id tenant,location.id location,account.id owner from tenant cross join location cross join account
+      `, [newPhone(), token]);
+      const sales: string[] = [];
+      for (const [seq, method, reference] of [[1, "CASH", null], [2, "TRANSFER", "LEGACY-TRF"], [3, "TRANSFER", "LEGACY-TRF"]] as const) {
+        const { rows: [row] } = await client.query<{ id: string }>(`
+          with context as (select set_config('app.session_token',$4,true)),
+          sale as (insert into biz.sale(tenant_id,location_id,document_seq,business_day,finalized_at,actor_user_id,idempotency_key,total_idr)
+            select $1,$2,$5,app.tenant_today($1),now(),$3,gen_random_uuid(),15000 from context returning id),
+          payment as (insert into biz.payment(tenant_id,sale_id,part_no,method,gross_cash_tendered,change_idr,net_received_idr,
+            bank_reference,verification_status,verified_by,verified_at)
+            select $1,id,1,$6,case when $6='CASH' then 15000 end,0,15000,$7,'VERIFIED',$3,now() from sale)
+          select id from sale`, [actor.tenant, actor.location, actor.owner, token, seq, method, reference]);
+        sales.push(row.id);
+      }
+      const stderr = migrate(migrations);
+      ok(stderr.includes("1 historical payment rows share an external reference"), "duplikasi lama dilaporkan");
+      const { rows: [summary] } = await client.query<{ invoices: number; payments: number; refs: number; paid: string }>(`select
+        (select count(*)::int from biz.invoice_state where f_idr=15000 and p_idr=15000 and version=1) invoices,
+        (select count(*)::int from biz.payment) payments,
+        (select count(*)::int from biz.payment_reference) refs,
+        (select sum(net_received_idr)::text from biz.payment) paid`);
+      eq(summary.invoices, 3, "tiga proyeksi faktur lunas");
+      eq(summary.payments, 3, "tiga catatan historis tetap ada");
+      eq(summary.paid, "45000", "tidak ada perubahan nilai pembayaran historis");
+      eq(summary.refs, 1, "satu identitas transfer historis");
+      await client.query("begin");
+      await client.query("set local role app_runtime");
+      await client.query("select set_config('app.session_token',$1,true)", [token]);
+      const { rows: [historical] } = await client.query<{ balance: string }>(
+        "select app.sale_get($1)->'receivable'->>'outstanding_idr' as balance", [sales[0]]);
+      await client.query("commit");
+      eq(historical.balance, "0", "faktur historis tampil lunas melalui fungsi aplikasi");
+      migrate(migrations);
+      return "Upgrade: tiga faktur lunas, tiga pembayaran Rp45.000 tetap, satu referensi historis tercatat, rerun migrasi lulus.";
+    } finally {
+      await client.end();
+      await admin(`drop database ${db} with (force)`);
+      rmSync(oldMigrations, { recursive: true, force: true });
+    }
   });
 
   // ---------------------------------------------------------------- TEMUAN-01

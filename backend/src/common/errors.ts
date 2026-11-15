@@ -48,6 +48,7 @@ const DB_CODES: Record<string, [number, string]> = {
   RECEIVABLE_SETTLED: [409, "Faktur ini sudah lunas"],
   RECEIVABLE_OVERPAID: [409, "Pembayaran melebihi sisa piutang faktur ini"],
   PAYMENT_PROOF_REQUIRED: [400, "Periksa dulu uang masuk di rekening, QRIS, atau mesin EDC sebelum menyimpan"],
+  PAYMENT_REFERENCE_DUPLICATE: [409, "Referensi pembayaran ini sudah tercatat"],
   SALE_TOTAL_LIMIT: [400, "Total penjualan melebihi kapasitas pencatatan rupiah"],
   // Inventori
   PACKAGE_INVALID: [400, "Varian kemasan tidak sah untuk produk ini"],

@@ -31,8 +31,8 @@ ST-POS-04,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-POS-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,SALE-ACCESS-01,,Harga dari klien ditolak API dan database. Pengujian paket pada checkout promo masih terbuka.
 ST-PAY-01,PRD V1.1 FINAL Appendix A,PASS,ST-PAY-01,API,Tempo Rp1.000.000 dibayar Rp400.000 menyisakan Rp600.000; pelunasan tidak menambah omzet atau mengurangi stok.
 ST-PAY-02,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,ST-PAY-02,API,Tunai + transfer tervalidasi dan tidak melebihi tagihan diuji di API. Perhitungan kas laci per hari belum tersedia.
-ST-PAY-03,PRD V1.1 FINAL Appendix A,PASS,ST-PAY-03;ST-PAY-01;RECV-CONC-01,API,Pengulangan checkout campuran dan pelunasan tidak menggandakan uang maupun piutang.
-ST-PAY-04,PRD V1.1 FINAL Appendix A,PASS,ST-PAY-04,API,Bayar sebagian tanpa pelanggan terdaftar ditolak dan tidak mengubah stok.
+ST-PAY-03,PRD V1.1 FINAL Appendix A,PASS,ST-PAY-03;ST-PAY-01;RECV-CONC-01;PAY-REF-01,API,Pengulangan tidak menggandakan uang maupun piutang. Referensi nontunai yang sama ditolak lintas checkout dan pelunasan.
+ST-PAY-04,PRD V1.1 FINAL Appendix A,PASS,ST-PAY-04;PAY-DATE-01,API,Bayar sebagian tanpa pelanggan terdaftar atau dengan tanggal jatuh tempo tidak sah ditolak tanpa mengubah stok.
 ST-PAY-05,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-PAY-06,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
 ST-PAY-07,PRD V1.1 FINAL Appendix A,BELUM_DIUJI,"","",""
