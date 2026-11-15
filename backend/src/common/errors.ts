@@ -39,7 +39,9 @@ const DB_CODES: Record<string, [number, string]> = {
   SALE_QUOTE_CHANGED: [409, "Harga atau stok berubah. Muat ulang dan konfirmasi kembali."],
   SALE_PRICE_MISSING: [409, "Kemasan belum mempunyai harga eceran yang disetujui"],
   SALE_BATCH_EXPIRED: [409, "Batch kedaluwarsa dan tidak bisa dijual"],
-  SALE_CASH_MISMATCH: [409, "Uang tunai dan kembalian harus sesuai dengan total tagihan"],
+  SALE_CASH_MISMATCH: [409, "Uang tunai dikurangi kembalian harus sama dengan bagian tunai"],
+  SALE_PAYMENT_MISMATCH: [409, "Jumlah semua pembayaran harus sama dengan total tagihan"],
+  PAYMENT_PROOF_REQUIRED: [400, "Periksa dulu uang masuk di rekening, QRIS, atau mesin EDC sebelum menyimpan"],
   SALE_TOTAL_LIMIT: [400, "Total penjualan melebihi kapasitas pencatatan rupiah"],
   // Inventori
   PACKAGE_INVALID: [400, "Varian kemasan tidak sah untuk produk ini"],

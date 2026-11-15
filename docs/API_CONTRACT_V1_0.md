@@ -97,6 +97,17 @@
 }
 ```
 
+Pembayaran campuran (maksimal 4 bagian, paling banyak 1 bagian tunai) untuk tagihan Rp46.000:
+
+```json
+"payments": [
+  {"method": "TRANSFER", "net_received_idr": "30000", "reference": "BRI 0912-7781", "proof_checked": true},
+  {"method": "CASH", "tendered_idr": "20000", "change_idr": "4000", "net_received_idr": "16000"}
+]
+```
+
+`method` nontunai: `TRANSFER`, `QRIS`, `EDC`. `proof_checked` wajib `true` (petugas sudah melihat uang masuk di rekening/QRIS/EDC); `false` ditolak 400 `PAYMENT_PROOF_REQUIRED`. `reference` opsional (1–64 karakter, tanpa spasi tepi/karakter kontrol). Jumlah `net_received_idr` semua bagian wajib sama dengan total server, kalau tidak 409 `SALE_PAYMENT_MISMATCH`; `tendered_idr − change_idr ≠ net_received_idr` pada bagian tunai menjadi 409 `SALE_CASH_MISMATCH`. Kembalian hanya ada pada bagian tunai. `GET /sales/{id}` mengembalikan `payments[]` berisi metode, nominal, referensi, `verification_status`, `verified_by`, `verified_at`.
+
 *Angka hanya contoh payload; server menghitung harga dari master dan PPN yang sah. `quote_version` tidak menjamin harga terkunci. Respons 201 hanya setelah commit, berisi `sale_id`, `receipt_number`, `grand_total_idr`, `cash_change_idr`, `version`; 409 untuk harga/stok/batch/entitlement konflik; 402 **tidak** digunakan untuk memalsukan status subscription.*
 
 ### 3.2 POST `/api/v1/refunds/approvals/{id}/attempts`

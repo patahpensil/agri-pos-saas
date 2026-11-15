@@ -38,6 +38,9 @@ fi
 if [[ ",$ids," == *"PRICE-"* ]]; then
   suites="$suites,price"
 fi
+if [[ ",$ids," == *"PAY-"* || ",$ids," == *"SALE-"* ]]; then
+  suites="$suites,price,sales"
+fi
 set +e
 ( cd "$root/backend" && TEST_TARGET=direct TEST_DB_NAME="$db" TEST_SUITES="$suites" TEST_ONLY_IDS="$ids" \
     TEST_RESULTS_DIR="$out" node dist/test/run.js ) > "$out/run.log" 2>&1
